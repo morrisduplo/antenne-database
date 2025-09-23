@@ -112,7 +112,294 @@ async function initBooksonixTable() {
         console.error('Error initializing Booksonix table:', err);
     }
 }
+// Add these updates to your server.js file
 
+// =============================================
+// 1. ADD THIS FUNCTION AFTER initBooksonixTable()
+// =============================================
+
+// Initialize Gazelle Sales table
+async function initGazelleTable() {
+    try {
+        // Create Gazelle Sales table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS gazelle_sales (
+                id SERIAL PRIMARY KEY,
+                order_ref VARCHAR(100),
+                order_date DATE,
+                customer_name VARCHAR(500),
+                city VARCHAR(200),
+                country VARCHAR(100),
+                title VARCHAR(500),
+                isbn13 VARCHAR(20),
+                quantity INTEGER DEFAULT 0,
+                unit_price DECIMAL(10,2),
+                discount DECIMAL(5,2) DEFAULT 0,
+                publisher VARCHAR(500),
+                format VARCHAR(100),
+                upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(order_ref, isbn13, customer_name)
+            )
+        `);
+        
+        // Create indexes for better performance
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_order_ref ON gazelle_sales(order_ref)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_customer ON gazelle_sales(customer_name)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_isbn ON gazelle_sales(isbn13)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_date ON gazelle_sales(order_date)`);
+        
+        console.log('Gazelle Sales table initialized successfully');
+        
+    } catch (err) {
+        console.error('Error initializing Gazelle Sales table:', err);
+    }
+}
+
+// =============================================
+// 2. UPDATE initDatabase() FUNCTION - Add this line after initBooksonixTable();
+// =============================================
+// In the initDatabase() function, add:
+        await initGazelleTable();  // Add this line after await initBooksonixTable();
+
+// =============================================
+// 3. ADD THIS ROUTE IN THE PAGE ROUTES SECTION
+// =============================================
+
+// Gazelle page
+app.get('/gazelle', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'gazelle.html'));
+});
+
+// =============================================
+// 4. ADD THESE API ROUTES (Add after Booksonix routes)
+// =============================================
+
+// =============================================
+// GAZELLE SALES ROUTES
+// =============================================
+
+// Upload Gazelle Sales file
+app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log('Processing Gazelle Sales file:', req.file.originalname);
+
+    try {
+        const workbook = xlsx.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+        console.log('Total rows in Excel file:', data.length);
+
+        let newRecords = 0;
+        let duplicates = 0;
+        let errors = 0;
+
+        // Skip the first row (header) if needed
+        const startIndex = 0; // If your data starts from row 2, change this to 1
+
+        for (let i = startIndex; i < data.length; i++) {
+            const row = data[i];
+            
+            // Map the Excel columns to database fields
+            const orderRef = row['Order Ref'] || row['OrderRef'] || row['order_ref'] || '';
+            const orderDate = row['Order Date'] || row['OrderDate'] || row['order_date'] || null;
+            const customerName = row['Customer Name'] || row['CustomerName'] || row['customer_name'] || '';
+            const city = row['City'] || row['city'] || '';
+            const country = row['Country'] || row['country'] || '';
+            const title = row['Title'] || row['title'] || '';
+            const isbn13 = row['ISBN13'] || row['isbn13'] || row['ISBN-13'] || '';
+            const quantity = parseInt(row['Quantity'] || row['quantity'] || 0) || 0;
+            const unitPrice = parseFloat(row['Unit Price'] || row['UnitPrice'] || row['unit_price'] || 0) || 0;
+            const discount = parseFloat(row['Discount'] || row['discount'] || 0) || 0;
+            const publisher = row['Publisher'] || row['publisher'] || '';
+            const format = row['Format'] || row['format'] || '';
+
+            // Skip rows without essential data
+            if (!orderRef || !customerName) {
+                errors++;
+                continue;
+            }
+
+            try {
+                // Parse date if it's a string
+                let parsedDate = null;
+                if (orderDate) {
+                    if (typeof orderDate === 'string') {
+                        parsedDate = new Date(orderDate);
+                    } else if (orderDate instanceof Date) {
+                        parsedDate = orderDate;
+                    } else if (typeof orderDate === 'number') {
+                        // Excel serial date number
+                        parsedDate = new Date((orderDate - 25569) * 86400 * 1000);
+                    }
+                    
+                    if (parsedDate && isNaN(parsedDate.getTime())) {
+                        parsedDate = null;
+                    }
+                }
+
+                const result = await pool.query(
+                    `INSERT INTO gazelle_sales 
+                    (order_ref, order_date, customer_name, city, country, title, isbn13, 
+                     quantity, unit_price, discount, publisher, format) 
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ON CONFLICT (order_ref, isbn13, customer_name) 
+                    DO UPDATE SET 
+                        order_date = EXCLUDED.order_date,
+                        city = EXCLUDED.city,
+                        country = EXCLUDED.country,
+                        title = EXCLUDED.title,
+                        quantity = EXCLUDED.quantity,
+                        unit_price = EXCLUDED.unit_price,
+                        discount = EXCLUDED.discount,
+                        publisher = EXCLUDED.publisher,
+                        format = EXCLUDED.format,
+                        upload_date = CURRENT_TIMESTAMP
+                    RETURNING id, (xmax = 0) AS inserted`,
+                    [orderRef, parsedDate, customerName, city, country, title, isbn13, 
+                     quantity, unitPrice, discount, publisher, format]
+                );
+
+                if (result.rows[0].inserted) {
+                    newRecords++;
+                } else {
+                    duplicates++;
+                }
+            } catch (err) {
+                console.error('Error inserting Gazelle record:', err.message);
+                errors++;
+            }
+        }
+
+        // Clean up uploaded file
+        fs.unlinkSync(req.file.path);
+
+        res.json({ 
+            success: true, 
+            message: `Processed ${data.length} records. New: ${newRecords}, Updated: ${duplicates}, Errors: ${errors}`,
+            newRecords: newRecords,
+            duplicates: duplicates,
+            errors: errors
+        });
+
+    } catch (error) {
+        console.error('Gazelle upload error:', error);
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get Gazelle Sales records
+app.get('/api/gazelle/records', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 999999; // Default to all records
+        const page = parseInt(req.query.page) || 1;
+        const offset = (page - 1) * limit;
+        
+        // Get total count
+        const countResult = await pool.query('SELECT COUNT(*) as total FROM gazelle_sales');
+        const totalRecords = parseInt(countResult.rows[0].total);
+        
+        // Get records
+        const result = await pool.query(
+            `SELECT * FROM gazelle_sales 
+             ORDER BY upload_date DESC, order_date DESC 
+             LIMIT $1 OFFSET $2`,
+            [limit, offset]
+        );
+        
+        res.json({ 
+            records: result.rows,
+            totalRecords: totalRecords,
+            page: page,
+            limit: limit
+        });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Get Gazelle Sales statistics
+app.get('/api/gazelle/stats', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                COUNT(*) as total_records,
+                COUNT(DISTINCT order_ref) as unique_orders,
+                SUM(quantity) as total_quantity,
+                SUM(quantity * unit_price * (1 - discount/100)) as total_revenue,
+                COUNT(DISTINCT customer_name) as unique_customers,
+                COUNT(DISTINCT title) as unique_titles,
+                COUNT(DISTINCT publisher) as unique_publishers
+            FROM gazelle_sales
+        `);
+        
+        res.json({
+            totalRecords: result.rows[0].total_records || 0,
+            uniqueOrders: result.rows[0].unique_orders || 0,
+            totalQuantity: result.rows[0].total_quantity || 0,
+            totalRevenue: parseFloat(result.rows[0].total_revenue || 0),
+            uniqueCustomers: result.rows[0].unique_customers || 0,
+            uniqueTitles: result.rows[0].unique_titles || 0,
+            uniquePublishers: result.rows[0].unique_publishers || 0
+        });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// =============================================
+// 5. UPDATE THE CLEAR DATA FUNCTIONS IN SETTINGS
+// =============================================
+
+// Add this new endpoint for clearing Gazelle data
+app.delete('/api/clear-gazelle', async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM gazelle_sales');
+        res.json({ 
+            success: true, 
+            message: `Successfully cleared ${result.rowCount} Gazelle Sales records`,
+            deletedCount: result.rowCount
+        });
+    } catch (err) {
+        console.error('Error clearing Gazelle Sales records:', err);
+        res.status(500).json({ error: 'Failed to clear Gazelle Sales records' });
+    }
+});
+
+// Update the /api/stats endpoint to include Gazelle stats
+app.get('/api/stats', async (req, res) => {
+    try {
+        // Get Booksonix stats
+        const booksonixResult = await pool.query(
+            'SELECT COUNT(*) as total FROM booksonix_records'
+        );
+        
+        // Get Gazelle stats
+        const gazelleResult = await pool.query(
+            'SELECT COUNT(*) as total FROM gazelle_sales'
+        );
+        
+        res.json({
+            total_records: 0,  // Placeholder for your data
+            total_customers: 0,  // Placeholder for your data
+            total_titles: 0,  // Placeholder for your data
+            excluded_customers: 0,  // Placeholder for your data
+            total_booksonix: booksonixResult.rows[0].total || 0,
+            total_gazelle: gazelleResult.rows[0].total || 0
+        });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
 // Initialize database tables
 async function initDatabase() {
     try {
