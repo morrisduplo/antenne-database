@@ -30,7 +30,7 @@ app.use(express.static('public'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Configure multer for file uploads (keeping for Booksonix and potential future use)
+// Configure multer for file uploads
 const upload = multer({ dest: 'uploads/' });
 
 // Initialize Booksonix table
@@ -112,11 +112,6 @@ async function initBooksonixTable() {
         console.error('Error initializing Booksonix table:', err);
     }
 }
-// Add these updates to your server.js file
-
-// =============================================
-// 1. ADD THIS FUNCTION AFTER initBooksonixTable()
-// =============================================
 
 // Initialize Gazelle Sales table
 async function initGazelleTable() {
@@ -155,15 +150,140 @@ async function initGazelleTable() {
     }
 }
 
-// =============================================
-// 2. UPDATE initDatabase() FUNCTION - Add this line after initBooksonixTable();
-// =============================================
-// In the initDatabase() function, add:
-        await initGazelleTable();  // Add this line after await initBooksonixTable();
+// Initialize database tables
+async function initDatabase() {
+    try {
+        console.log('Starting database initialization...');
+
+        // Create users table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) UNIQUE NOT NULL,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                role VARCHAR(50) DEFAULT 'editor',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP
+            )
+        `);
+
+        // Create customer name mappings table (for settings)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS customer_mappings (
+                id SERIAL PRIMARY KEY,
+                original_name VARCHAR(500) NOT NULL,
+                display_name VARCHAR(500) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Initialize Booksonix table
+        await initBooksonixTable();
+        
+        // Initialize Gazelle table
+        await initGazelleTable();
+
+        console.log('Database tables created successfully');
+        
+        // Check if admin user exists
+        const adminCheck = await pool.query("SELECT * FROM users WHERE username = 'admin'");
+        
+        if (adminCheck.rows.length === 0) {
+            console.log('Creating admin user...');
+            
+            // Create admin user with password 'admin123'
+            const hashedPassword = await bcrypt.hash('admin123', 10);
+            
+            await pool.query(
+                'INSERT INTO users (username, email, password, role) VALUES ($1, $2, $3, $4)',
+                ['admin', 'admin@antennebooks.com', hashedPassword, 'admin']
+            );
+            
+            console.log('=================================');
+            console.log('Admin user created successfully!');
+            console.log('Username: admin');
+            console.log('Password: admin123');
+            console.log('IMPORTANT: Please change this password immediately after first login!');
+            console.log('=================================');
+        } else {
+            console.log('Admin user already exists');
+        }
+        
+    } catch (err) {
+        console.error('Error initializing database:', err);
+        throw err;
+    }
+}
+
+// Initialize database on startup
+initDatabase().catch(err => {
+    console.error('Failed to initialize database:', err);
+});
 
 // =============================================
-// 3. ADD THIS ROUTE IN THE PAGE ROUTES SECTION
+// PAGE ROUTES
 // =============================================
+
+// Home page
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Customers page
+app.get('/customers', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'customers.html'));
+});
+
+// Reports page
+app.get('/reports', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'reports.html'));
+});
+
+// Settings page
+app.get('/settings', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
+});
+
+// Login page
+app.get('/login', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/login.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Data Upload main page
+app.get('/data-upload', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'data-upload.html'));
+});
+
+// Data Upload sub-pages
+app.get('/data-upload/page2', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'data-upload-page2.html'));
+});
+
+app.get('/data-upload/page3', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'data-upload-page3.html'));
+});
+
+app.get('/data-upload/page4', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'data-upload-page4.html'));
+});
+
+app.get('/data-upload/page5', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'data-upload-page5.html'));
+});
+
+app.get('/data-upload/page6', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'data-upload-page6.html'));
+});
+
+// Booksonix page
+app.get('/booksonix', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'booksonix.html'));
+});
 
 // Gazelle page
 app.get('/gazelle', (req, res) => {
@@ -171,8 +291,213 @@ app.get('/gazelle', (req, res) => {
 });
 
 // =============================================
-// 4. ADD THESE API ROUTES (Add after Booksonix routes)
+// AUTHENTICATION ROUTES
 // =============================================
+
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+
+    console.log('Login attempt for username:', username);
+
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password required' });
+    }
+
+    try {
+        const result = await pool.query(
+            'SELECT * FROM users WHERE username = $1 OR email = $1',
+            [username]
+        );
+
+        if (result.rows.length === 0) {
+            console.log('No user found with username:', username);
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        const user = result.rows[0];
+        const validPassword = await bcrypt.compare(password, user.password);
+        
+        if (!validPassword) {
+            console.log('Invalid password for user:', username);
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // Update last login
+        await pool.query(
+            'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+            [user.id]
+        );
+
+        console.log('Login successful for:', username);
+
+        res.json({
+            success: true,
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (err) {
+        console.error('Login database error:', err);
+        res.status(500).json({ error: 'Database error during login' });
+    }
+});
+
+// =============================================
+// BOOKSONIX ROUTES
+// =============================================
+
+app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log('Processing Booksonix file:', req.file.originalname);
+
+    try {
+        const workbook = xlsx.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+        console.log('Total rows in Excel file:', data.length);
+
+        let newRecords = 0;
+        let duplicates = 0;
+        let errors = 0;
+        let skippedNoSku = 0;
+
+        for (const row of data) {
+            // Look for SKU in multiple possible column names and clean it
+            let sku = row['SKU'] || row['sku'] || row['Sku'] || 
+                       row['Product SKU'] || row['Product Code'] || 
+                       row['Item Code'] || row['Code'] || '';
+            
+            // Clean SKU - remove hyphens
+            if (sku) {
+                sku = String(sku).replace(/-/g, '').trim();
+            }
+            
+            if (!sku) {
+                skippedNoSku++;
+                errors++;
+                continue;
+            }
+
+            const isbn = row['ISBN-13'] || row['ISBN13'] || row['isbn-13'] || row['ISBN'] || row['EAN'] || '';
+            const title = row['Title'] || row['TITLE'] || row['Product Title'] || '';
+            const publisher = row['Publishers'] || row['Publisher'] || row['PUBLISHER'] || '';
+            
+            let price = 0;
+            const priceValue = row['Prices'] || row['Price'] || row['PRICE'] || row['RRP'] || '';
+            if (priceValue) {
+                const cleanPrice = String(priceValue)
+                    .replace(/GBP/gi, '')
+                    .replace(/£/g, '')
+                    .replace(/,/g, '')
+                    .replace(/[^\d.]/g, '')
+                    .trim();
+                price = parseFloat(cleanPrice) || 0;
+            }
+
+            try {
+                const result = await pool.query(
+                    `INSERT INTO booksonix_records 
+                    (sku, isbn, title, author, publisher, price, quantity) 
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (sku) 
+                    DO UPDATE SET 
+                        isbn = COALESCE(NULLIF(EXCLUDED.isbn, ''), booksonix_records.isbn),
+                        title = EXCLUDED.title,
+                        publisher = EXCLUDED.publisher,
+                        price = EXCLUDED.price,
+                        last_updated = CURRENT_TIMESTAMP
+                    RETURNING id, (xmax = 0) AS inserted`,
+                    [sku, isbn || null, title, '', publisher, price, 0]
+                );
+
+                if (result.rows[0].inserted) {
+                    newRecords++;
+                } else {
+                    duplicates++;
+                }
+            } catch (err) {
+                console.error('Error inserting Booksonix record:', err.message);
+                errors++;
+            }
+        }
+
+        // Clean up uploaded file
+        fs.unlinkSync(req.file.path);
+
+        res.json({ 
+            success: true, 
+            message: `Processed ${data.length} records. New: ${newRecords}, Updated: ${duplicates}, Errors: ${errors}`,
+            newRecords: newRecords,
+            duplicates: duplicates,
+            errors: errors
+        });
+
+    } catch (error) {
+        console.error('Booksonix upload error:', error);
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/booksonix/records', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 500;
+        const page = parseInt(req.query.page) || 1;
+        const offset = (page - 1) * limit;
+        
+        // Get total count
+        const countResult = await pool.query('SELECT COUNT(*) as total FROM booksonix_records');
+        const totalRecords = parseInt(countResult.rows[0].total);
+        
+        // Get records
+        const result = await pool.query(
+            'SELECT * FROM booksonix_records ORDER BY upload_date DESC LIMIT $1 OFFSET $2',
+            [limit, offset]
+        );
+        
+        res.json({ 
+            records: result.rows,
+            totalRecords: totalRecords,
+            page: page,
+            limit: limit
+        });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+app.get('/api/booksonix/stats', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                COUNT(*) as total_records,
+                COUNT(DISTINCT sku) as unique_skus,
+                COUNT(DISTINCT isbn) as unique_isbns,
+                COUNT(DISTINCT publisher) as publishers
+            FROM booksonix_records
+        `);
+        
+        res.json({
+            totalRecords: result.rows[0].total_records || 0,
+            uniqueSKUs: result.rows[0].unique_skus || 0,
+            uniqueISBNs: result.rows[0].unique_isbns || 0,
+            totalPublishers: result.rows[0].publishers || 0
+        });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
 
 // =============================================
 // GAZELLE SALES ROUTES
@@ -348,369 +673,6 @@ app.get('/api/gazelle/stats', async (req, res) => {
             uniqueCustomers: result.rows[0].unique_customers || 0,
             uniqueTitles: result.rows[0].unique_titles || 0,
             uniquePublishers: result.rows[0].unique_publishers || 0
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-// =============================================
-// 5. UPDATE THE CLEAR DATA FUNCTIONS IN SETTINGS
-// =============================================
-
-// Add this new endpoint for clearing Gazelle data
-app.delete('/api/clear-gazelle', async (req, res) => {
-    try {
-        const result = await pool.query('DELETE FROM gazelle_sales');
-        res.json({ 
-            success: true, 
-            message: `Successfully cleared ${result.rowCount} Gazelle Sales records`,
-            deletedCount: result.rowCount
-        });
-    } catch (err) {
-        console.error('Error clearing Gazelle Sales records:', err);
-        res.status(500).json({ error: 'Failed to clear Gazelle Sales records' });
-    }
-});
-
-// Update the /api/stats endpoint to include Gazelle stats
-app.get('/api/stats', async (req, res) => {
-    try {
-        // Get Booksonix stats
-        const booksonixResult = await pool.query(
-            'SELECT COUNT(*) as total FROM booksonix_records'
-        );
-        
-        // Get Gazelle stats
-        const gazelleResult = await pool.query(
-            'SELECT COUNT(*) as total FROM gazelle_sales'
-        );
-        
-        res.json({
-            total_records: 0,  // Placeholder for your data
-            total_customers: 0,  // Placeholder for your data
-            total_titles: 0,  // Placeholder for your data
-            excluded_customers: 0,  // Placeholder for your data
-            total_booksonix: booksonixResult.rows[0].total || 0,
-            total_gazelle: gazelleResult.rows[0].total || 0
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-// Initialize database tables
-async function initDatabase() {
-    try {
-        console.log('Starting database initialization...');
-
-        // Create users table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(100) UNIQUE NOT NULL,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                role VARCHAR(50) DEFAULT 'editor',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP
-            )
-        `);
-
-        // Create customer name mappings table (for settings)
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS customer_mappings (
-                id SERIAL PRIMARY KEY,
-                original_name VARCHAR(500) NOT NULL,
-                display_name VARCHAR(500) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
-        // Initialize Booksonix table
-        await initBooksonixTable();
-
-        console.log('Database tables created successfully');
-        
-        // Check if admin user exists
-        const adminCheck = await pool.query("SELECT * FROM users WHERE username = 'admin'");
-        
-        if (adminCheck.rows.length === 0) {
-            console.log('Creating admin user...');
-            
-            // Create admin user with password 'admin123'
-            const hashedPassword = await bcrypt.hash('admin123', 10);
-            
-            await pool.query(
-                'INSERT INTO users (username, email, password, role) VALUES ($1, $2, $3, $4)',
-                ['admin', 'admin@antennebooks.com', hashedPassword, 'admin']
-            );
-            
-            console.log('=================================');
-            console.log('Admin user created successfully!');
-            console.log('Username: admin');
-            console.log('Password: admin123');
-            console.log('IMPORTANT: Please change this password immediately after first login!');
-            console.log('=================================');
-        } else {
-            console.log('Admin user already exists');
-        }
-        
-    } catch (err) {
-        console.error('Error initializing database:', err);
-        throw err;
-    }
-}
-
-// Initialize database on startup
-initDatabase().catch(err => {
-    console.error('Failed to initialize database:', err);
-});
-
-// =============================================
-// PAGE ROUTES
-// =============================================
-
-// Home page
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Customers page
-app.get('/customers', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'customers.html'));
-});
-
-// Reports page
-app.get('/reports', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'reports.html'));
-});
-
-// Settings page
-app.get('/settings', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
-});
-
-// Login page
-app.get('/login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-app.get('/login.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-// Data Upload main page
-app.get('/data-upload', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload.html'));
-});
-
-// Data Upload sub-pages
-app.get('/data-upload/page2', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page2.html'));
-});
-
-app.get('/data-upload/page3', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page3.html'));
-});
-
-app.get('/data-upload/page4', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page4.html'));
-});
-
-app.get('/data-upload/page5', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page5.html'));
-});
-
-app.get('/data-upload/page6', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page6.html'));
-});
-
-// Booksonix page
-app.get('/booksonix', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'booksonix.html'));
-});
-
-// =============================================
-// AUTHENTICATION ROUTES
-// =============================================
-
-app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-
-    console.log('Login attempt for username:', username);
-
-    if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password required' });
-    }
-
-    try {
-        const result = await pool.query(
-            'SELECT * FROM users WHERE username = $1 OR email = $1',
-            [username]
-        );
-
-        if (result.rows.length === 0) {
-            console.log('No user found with username:', username);
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        const user = result.rows[0];
-        const validPassword = await bcrypt.compare(password, user.password);
-        
-        if (!validPassword) {
-            console.log('Invalid password for user:', username);
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        // Update last login
-        await pool.query(
-            'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
-            [user.id]
-        );
-
-        console.log('Login successful for:', username);
-
-        res.json({
-            success: true,
-            user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                role: user.role
-            }
-        });
-    } catch (err) {
-        console.error('Login database error:', err);
-        res.status(500).json({ error: 'Database error during login' });
-    }
-});
-
-// =============================================
-// BOOKSONIX ROUTES
-// =============================================
-
-app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    console.log('Processing Booksonix file:', req.file.originalname);
-
-    try {
-        const workbook = xlsx.readFile(req.file.path);
-        const sheetName = workbook.SheetNames[0];
-        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-
-        console.log('Total rows in Excel file:', data.length);
-
-        let newRecords = 0;
-        let duplicates = 0;
-        let errors = 0;
-        let skippedNoSku = 0;
-
-        for (const row of data) {
-            // Look for SKU in multiple possible column names
-            const sku = row['SKU'] || row['sku'] || row['Sku'] || 
-                       row['Product SKU'] || row['Product Code'] || 
-                       row['Item Code'] || row['Code'] || '';
-            
-            if (!sku) {
-                skippedNoSku++;
-                errors++;
-                continue;
-            }
-
-            const isbn = row['ISBN-13'] || row['ISBN13'] || row['isbn-13'] || row['ISBN'] || row['EAN'] || '';
-            const title = row['Title'] || row['TITLE'] || row['Product Title'] || '';
-            const publisher = row['Publishers'] || row['Publisher'] || row['PUBLISHER'] || '';
-            
-            let price = 0;
-            const priceValue = row['Prices'] || row['Price'] || row['PRICE'] || row['RRP'] || '';
-            if (priceValue) {
-                const cleanPrice = String(priceValue)
-                    .replace(/GBP/gi, '')
-                    .replace(/£/g, '')
-                    .replace(/,/g, '')
-                    .replace(/[^\d.]/g, '')
-                    .trim();
-                price = parseFloat(cleanPrice) || 0;
-            }
-
-            try {
-                const result = await pool.query(
-                    `INSERT INTO booksonix_records 
-                    (sku, isbn, title, author, publisher, price, quantity) 
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (sku) 
-                    DO UPDATE SET 
-                        isbn = COALESCE(NULLIF(EXCLUDED.isbn, ''), booksonix_records.isbn),
-                        title = EXCLUDED.title,
-                        publisher = EXCLUDED.publisher,
-                        price = EXCLUDED.price,
-                        last_updated = CURRENT_TIMESTAMP
-                    RETURNING id, (xmax = 0) AS inserted`,
-                    [sku, isbn || null, title, '', publisher, price, 0]
-                );
-
-                if (result.rows[0].inserted) {
-                    newRecords++;
-                } else {
-                    duplicates++;
-                }
-            } catch (err) {
-                console.error('Error inserting Booksonix record:', err.message);
-                errors++;
-            }
-        }
-
-        // Clean up uploaded file
-        fs.unlinkSync(req.file.path);
-
-        res.json({ 
-            success: true, 
-            message: `Processed ${data.length} records. New: ${newRecords}, Updated: ${duplicates}, Errors: ${errors}`,
-            newRecords: newRecords,
-            duplicates: duplicates,
-            errors: errors
-        });
-
-    } catch (error) {
-        console.error('Booksonix upload error:', error);
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/booksonix/records', async (req, res) => {
-    try {
-        const result = await pool.query(
-            'SELECT * FROM booksonix_records ORDER BY upload_date DESC LIMIT 500'
-        );
-        res.json({ records: result.rows });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-app.get('/api/booksonix/stats', async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(DISTINCT sku) as unique_skus,
-                COUNT(DISTINCT publisher) as publishers
-            FROM booksonix_records
-        `);
-        
-        res.json({
-            totalRecords: result.rows[0].total_records || 0,
-            uniqueSKUs: result.rows[0].unique_skus || 0,
-            totalPublishers: result.rows[0].publishers || 0
         });
     } catch (err) {
         console.error('Database error:', err);
@@ -923,9 +885,14 @@ app.delete('/api/mappings/:id', async (req, res) => {
 
 app.get('/api/stats', async (req, res) => {
     try {
-        // Get Booksonix stats for the settings page
+        // Get Booksonix stats
         const booksonixResult = await pool.query(
             'SELECT COUNT(*) as total FROM booksonix_records'
+        );
+        
+        // Get Gazelle stats
+        const gazelleResult = await pool.query(
+            'SELECT COUNT(*) as total FROM gazelle_sales'
         );
         
         res.json({
@@ -933,7 +900,8 @@ app.get('/api/stats', async (req, res) => {
             total_customers: 0,  // Placeholder for your data
             total_titles: 0,  // Placeholder for your data
             excluded_customers: 0,  // Placeholder for your data
-            total_booksonix: booksonixResult.rows[0].total || 0
+            total_booksonix: booksonixResult.rows[0].total || 0,
+            total_gazelle: gazelleResult.rows[0].total || 0
         });
     } catch (err) {
         console.error('Database error:', err);
@@ -958,6 +926,20 @@ app.delete('/api/clear-booksonix', async (req, res) => {
     } catch (err) {
         console.error('Error clearing Booksonix records:', err);
         res.status(500).json({ error: 'Failed to clear Booksonix records' });
+    }
+});
+
+app.delete('/api/clear-gazelle', async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM gazelle_sales');
+        res.json({ 
+            success: true, 
+            message: `Successfully cleared ${result.rowCount} Gazelle Sales records`,
+            deletedCount: result.rowCount
+        });
+    } catch (err) {
+        console.error('Error clearing Gazelle Sales records:', err);
+        res.status(500).json({ error: 'Failed to clear Gazelle Sales records' });
     }
 });
 
