@@ -402,6 +402,7 @@
             border-radius: 6px;
             text-align: center;
             border: 1px solid #ddd;
+            position: relative;
         }
 
         .stat-card.clickable {
@@ -425,6 +426,21 @@
         .stat-label {
             color: #666;
             font-size: 12px;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #333;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         table {
@@ -572,6 +588,14 @@
             outline: none;
             border-color: #333;
         }
+
+        .debug-info {
+            position: absolute;
+            bottom: 2px;
+            right: 5px;
+            font-size: 9px;
+            color: #999;
+        }
     </style>
 </head>
 <body>
@@ -627,6 +651,7 @@
             <div class="stat-card clickable" id="isbnStatCard">
                 <div class="stat-number" id="uniqueISBNs">0</div>
                 <div class="stat-label">Unique ISBNs</div>
+                <div class="debug-info" id="isbnDebugInfo">Click to recalculate</div>
             </div>
             <div class="stat-card">
                 <div class="stat-number" id="newRecords">0</div>
@@ -749,6 +774,7 @@
         let currentPage = 1;
         let recordsPerPage = 500;
         let totalPages = 1;
+        let globalUniqueISBNCount = 0; // Store the ISBN count globally
 
         // Drag and drop functionality
         fileDropArea.addEventListener('click', () => fileInput.click());
@@ -1036,9 +1062,31 @@
                     document.getElementById('paginationBottom').style.display = 'flex';
                 }
                 
+                // After loading records, also calculate ISBNs from them
+                if (page === 1) { // Only on first page load
+                    calculateISBNsFromCurrentData();
+                }
+                
             } catch (error) {
                 recordsContainer.innerHTML = '<div class="no-records">Error loading records: ' + error.message + '</div>';
                 recordCount.textContent = '';
+            }
+        }
+
+        // Calculate ISBNs from current loaded data
+        function calculateISBNsFromCurrentData() {
+            // This is a quick calculation from the current page
+            const isbnSet = new Set();
+            booksonixRecords.forEach(record => {
+                if (record.isbn && record.isbn.trim() !== '' && record.isbn !== '-') {
+                    isbnSet.add(record.isbn.trim());
+                }
+            });
+            
+            // If we have ISBNs on this page and the stat is 0, update it
+            if (isbnSet.size > 0 && uniqueISBNsEl.textContent === '0') {
+                console.log(`Found ${isbnSet.size} unique ISBNs on current page`);
+                // This is just a minimum, the actual count could be higher
             }
         }
 
@@ -1159,7 +1207,7 @@
             });
         }
 
-        // UPDATED Load statistics function with better ISBN counting
+        // ENHANCED Load statistics function
         async function loadStats() {
             try {
                 const response = await fetch('/api/booksonix/stats');
@@ -1168,80 +1216,83 @@
                 // Update the display elements
                 totalRecordsEl.textContent = (stats.totalRecords || 0).toLocaleString();
                 uniqueSKUsEl.textContent = (stats.uniqueSKUs || 0).toLocaleString();
-                uniqueISBNsEl.textContent = (stats.uniqueISBNs || 0).toLocaleString();
                 
-                // If stats are still showing 0 for ISBNs but we have records, 
-                // fetch a separate ISBN count (fallback)
-                if (stats.uniqueISBNs === 0 && stats.totalRecords > 0) {
-                    console.log('Unique ISBNs showing 0, attempting to fetch ISBN analysis...');
-                    try {
-                        // Try to get ISBN count through a different endpoint
-                        const isbnResponse = await fetch('/api/booksonix/isbn-count');
-                        if (isbnResponse.ok) {
-                            const isbnData = await isbnResponse.json();
-                            uniqueISBNsEl.textContent = (isbnData.count || 0).toLocaleString();
-                        }
-                    } catch (isbnError) {
-                        console.error('Failed to fetch ISBN count:', isbnError);
-                        // Try debug count as last resort
-                        await debugISBNCount();
-                    }
+                // If backend returns 0 for ISBNs but we have records, calculate it client-side
+                if ((!stats.uniqueISBNs || stats.uniqueISBNs === 0) && stats.totalRecords > 0) {
+                    console.log('Backend returned 0 ISBNs, calculating client-side...');
+                    await calculateAllUniqueISBNs();
+                } else {
+                    uniqueISBNsEl.textContent = (stats.uniqueISBNs || 0).toLocaleString();
+                    globalUniqueISBNCount = stats.uniqueISBNs || 0;
                 }
                 
-                // Log the stats for debugging
-                console.log('Booksonix Stats:', {
-                    totalRecords: stats.totalRecords,
-                    uniqueSKUs: stats.uniqueSKUs,
-                    uniqueISBNs: stats.uniqueISBNs
-                });
+                console.log('Stats from backend:', stats);
                 
             } catch (error) {
                 console.error('Error loading stats:', error);
-                // Set all stats to 0 if there's an error
-                totalRecordsEl.textContent = '0';
-                uniqueSKUsEl.textContent = '0';
-                uniqueISBNsEl.textContent = '0';
+                // Try to calculate ISBNs client-side as fallback
+                await calculateAllUniqueISBNs();
             }
         }
 
-        // Debug function to manually check ISBN count from loaded records
-        async function debugISBNCount() {
+        // Calculate all unique ISBNs by fetching all records
+        async function calculateAllUniqueISBNs() {
             try {
-                // Fetch ALL records without pagination to get accurate count
-                const response = await fetch('/api/booksonix/records?limit=999999');
+                uniqueISBNsEl.innerHTML = '<div class="loading-spinner"></div>';
+                document.getElementById('isbnDebugInfo').textContent = 'Calculating...';
+                
+                // Fetch ALL records to get accurate ISBN count
+                const response = await fetch('/api/booksonix/records?limit=10000&page=1');
                 const data = await response.json();
-                const allRecords = data.records || [];
+                const records = data.records || [];
                 
-                // Calculate unique ISBNs from all records
+                // If we have more records, fetch them too
+                if (data.totalRecords > 10000) {
+                    console.log(`Total records: ${data.totalRecords}, fetching more...`);
+                    // Fetch additional pages if needed
+                    const totalPages = Math.ceil(data.totalRecords / 10000);
+                    for (let p = 2; p <= Math.min(totalPages, 5); p++) {
+                        const moreResponse = await fetch(`/api/booksonix/records?limit=10000&page=${p}`);
+                        const moreData = await moreResponse.json();
+                        records.push(...(moreData.records || []));
+                    }
+                }
+                
+                // Calculate unique ISBNs
                 const isbnSet = new Set();
-                let recordsWithISBN = 0;
-                let emptyISBNs = 0;
+                let validISBNCount = 0;
+                let invalidISBNCount = 0;
                 
-                allRecords.forEach(record => {
-                    if (record.isbn && record.isbn.trim() !== '') {
-                        isbnSet.add(record.isbn.trim());
-                        recordsWithISBN++;
-                    } else {
-                        emptyISBNs++;
+                records.forEach(record => {
+                    if (record.isbn) {
+                        const isbn = record.isbn.toString().trim();
+                        if (isbn && isbn !== '' && isbn !== '-' && isbn !== 'null') {
+                            isbnSet.add(isbn);
+                            validISBNCount++;
+                        } else {
+                            invalidISBNCount++;
+                        }
                     }
                 });
                 
-                console.log('ISBN Analysis:', {
-                    totalRecords: allRecords.length,
+                globalUniqueISBNCount = isbnSet.size;
+                uniqueISBNsEl.textContent = globalUniqueISBNCount.toLocaleString();
+                document.getElementById('isbnDebugInfo').textContent = 'Calculated from data';
+                
+                console.log('ISBN Calculation Complete:', {
+                    totalRecordsChecked: records.length,
                     uniqueISBNs: isbnSet.size,
-                    recordsWithISBN: recordsWithISBN,
-                    recordsWithoutISBN: emptyISBNs,
-                    sampleISBNs: Array.from(isbnSet).slice(0, 10) // Show first 10 ISBNs as sample
+                    recordsWithValidISBN: validISBNCount,
+                    recordsWithInvalidISBN: invalidISBNCount,
+                    sampleISBNs: Array.from(isbnSet).slice(0, 5)
                 });
                 
-                // Update the display if the backend isn't returning the correct count
-                if (isbnSet.size > 0) {
-                    uniqueISBNsEl.textContent = isbnSet.size.toLocaleString();
-                }
-                
                 return isbnSet.size;
+                
             } catch (error) {
-                console.error('Error in debugISBNCount:', error);
+                console.error('Error calculating ISBNs:', error);
+                uniqueISBNsEl.textContent = '?';
+                document.getElementById('isbnDebugInfo').textContent = 'Error';
                 return 0;
             }
         }
@@ -1251,27 +1302,31 @@
             // Initialize pagination controls
             initializePaginationControls();
             
-            // Add click event to the ISBN stat card for debugging
+            // Add click event to the ISBN stat card
             const isbnStatCard = document.getElementById('isbnStatCard');
             if (isbnStatCard) {
-                isbnStatCard.title = 'Click to refresh ISBN count';
-                
                 isbnStatCard.addEventListener('click', async () => {
-                    uniqueISBNsEl.textContent = '...';
-                    await loadStats();
-                    // Also run debug count
-                    const debugCount = await debugISBNCount();
-                    console.log('Debug ISBN count:', debugCount);
+                    console.log('Manually recalculating ISBN count...');
+                    await calculateAllUniqueISBNs();
                 });
             }
             
             // Load initial data
             loadRecords(1);
             loadStats();
+            
+            // Auto-calculate ISBNs after a delay if still showing 0
+            setTimeout(() => {
+                if (uniqueISBNsEl.textContent === '0' || uniqueISBNsEl.textContent === '') {
+                    console.log('Auto-calculating ISBN count...');
+                    calculateAllUniqueISBNs();
+                }
+            }, 2000);
         });
 
-        // Make debugISBNCount available in console for debugging
-        window.debugISBNCount = debugISBNCount;
+        // Make functions available in console for debugging
+        window.calculateAllUniqueISBNs = calculateAllUniqueISBNs;
+        window.loadStats = loadStats;
     </script>
 </body>
 </html>
