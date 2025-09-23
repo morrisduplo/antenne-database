@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booksonix - Antenne Books</title>
+    
+    <!-- Authentication Check Script -->
+    <script>
+        // Authentication check for protected pages
+        (function() {
+            // Check authentication
+            const session = localStorage.getItem('userSession');
+            
+            if (!session) {
+                // No session, redirect to login
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            try {
+                const sessionData = JSON.parse(session);
+                
+                // Check if session is still valid
+                const maxAge = sessionData.remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+                if (new Date() - new Date(sessionData.timestamp) > maxAge) {
+                    // Session expired
+                    localStorage.removeItem('userSession');
+                    window.location.href = '/login.html';
+                    return;
+                }
+                
+                // Store user info globally for the page to use
+                window.currentUser = sessionData;
+                
+            } catch (e) {
+                // Invalid session data
+                localStorage.removeItem('userSession');
+                window.location.href = '/login.html';
+            }
+        })();
+        
+        function logout() {
+            localStorage.removeItem('userSession');
+            window.location.href = '/login.html';
+        }
+    </script>
+    
+    <!-- Import Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier', monospace;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'EB Garamond', serif;
+            font-weight: 400;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #f1f3f4;
+            padding-bottom: 20px;
+        }
+
+        h1 {
+            color: #333333;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-info {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .user-info strong {
+            color: #333;
+        }
+
+        .btn-logout {
+            background: #dc3545;
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-decoration: none;
+            transition: background-color 0.3s;
+        }
+
+        .btn-logout:hover {
+            background: #c82333;
+        }
+
+        .back-link {
+            color: #666;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid #666;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .back-link:hover {
+            background: #f1f3f4;
+        }
+
+        .upload-section {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+
+        .upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .file-drop-area {
+            padding: 30px;
+            border: 2px dashed #bdc3c7;
+            border-radius: 5px;
+            background: white;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .file-drop-area:hover {
+            border-color: #666666;
+            background-color: #f8f9fa;
+        }
+
+        .file-drop-area.dragover {
+            border-color: #333333;
+            background-color: #e9ecef;
+        }
+
+        .file-drop-area input[type="file"] {
+            display: none;
+        }
+
+        .file-drop-text {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .file-count {
+            font-size: 18px;
+            font-weight: bold;
+            color: #28a745;
+            margin-top: 10px;
+        }
+
+        .file-list {
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 5px;
+            padding: 10px;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 12px;
+        }
+
+        .file-item:hover {
+            background: #f1f3f4;
+        }
+
+        .file-name {
+            flex: 1;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-size {
+            color: #666;
+            margin-left: 10px;
+            font-size: 11px;
+        }
+
+        .file-status {
+            margin-left: 10px;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+
+        .status-pending {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .status-processing {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .status-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .status-error {
+            background: #dc3545;
+            color: white;
+        }
+
+        .remove-file {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            margin-left: 10px;
+        }
+
+        .remove-file:hover {
+            background: #c82333;
+        }
+
+        .upload-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            background: #000000;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background: #333333;
+        }
+
+        button:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .btn-clear {
+            background: #6c757d;
+        }
+
+        .btn-clear:hover {
+            background: #5a6268;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .upload-progress {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            display: none;
+        }
+
+        .progress-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 20px;
+            background: #ddd;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: #28a745;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .records-section {
+            margin-top: 30px;
+        }
+
+        .records-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .records-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .refresh-btn {
+            background: #000000;
+            font-size: 14px;
+            padding: 8px 16px;
+        }
+
+        .refresh-btn:hover {
+            background: #333333;
+        }
+
+        .stats-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            border: 1px solid #ddd;
+        }
+
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 11px;
+        }
+
+        th, td {
+            padding: 4px 6px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+            line-height: 1.2;
+        }
+
+        th {
+            background-color: #34495e;
+            color: white;
+            font-weight: normal;
+            font-family: 'Courier', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #7f8c8d;
+        }
+
+        .no-records {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+            font-style: italic;
+            font-size: 12px;
+        }
+
+        .record-count {
+            color: #7f8c8d;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Booksonix</h1>
+            <div class="header-right">
+                <span class="user-info">Logged in as: <strong id="currentUserName">User</strong></span>
+                <button class="btn-logout" onclick="logout()">Logout</button>
+                <a href="/data-upload" class="back-link">← Back to Data Upload</a>
+            </div>
+        </div>
+        
+        <!-- Upload Section -->
+        <div class="upload-section">
+            <h2>Upload Booksonix Data</h2>
+            <form id="uploadForm" class="upload-form">
+                <div class="file-drop-area" id="fileDropArea">
+                    <div>📁 Drop Excel files here or click to browse</div>
+                    <div class="file-drop-text">Supports .xlsx and .xls files</div>
+                    <div class="file-count" id="fileCount" style="display: none;"></div>
+                    <input type="file" id="fileInput" accept=".xlsx,.xls" multiple>
+                </div>
+                
+                <div id="fileList" class="file-list" style="display: none;"></div>
+                
+                <div class="upload-controls">
+                    <button type="submit" id="uploadBtn">Upload & Process Files</button>
+                    <button type="button" id="clearBtn" class="btn-clear" style="display: none;">Clear All Files</button>
+                </div>
+                
+                <div id="uploadProgress" class="upload-progress">
+                    <div class="progress-title">Processing Files...</div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progressBar"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">Processing file 0 of 0...</div>
+                </div>
+            </form>
+            <div id="status" class="status"></div>
+        </div>
+
+        <!-- Statistics Section -->
+        <div class="stats-section">
+            <div class="stat-card">
+                <div class="stat-number" id="totalRecords">0</div>
+                <div class="stat-label">Total Records</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="uniqueSKUs">0</div>
+                <div class="stat-label">Unique SKUs</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="newRecords">0</div>
+                <div class="stat-label">New Records Added</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="duplicatesSkipped">0</div>
+                <div class="stat-label">Duplicates Skipped</div>
+            </div>
+        </div>
+
+        <!-- Records Section -->
+        <div class="records-section">
+            <div class="records-header">
+                <h2>Booksonix Records</h2>
+                <div class="records-controls">
+                    <span id="recordCount" class="record-count"></span>
+                    <button id="refreshBtn" class="refresh-btn">Refresh Data</button>
+                </div>
+            </div>
+            
+            <div id="recordsContainer">
+                <div class="loading">Loading records...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Display current user
+        if (window.currentUser) {
+            document.getElementById('currentUserName').textContent = window.currentUser.username;
+        }
+        
+        // DOM elements
+        const uploadForm = document.getElementById('uploadForm');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const status = document.getElementById('status');
+        const fileDropArea = document.getElementById('fileDropArea');
+        const fileCount = document.getElementById('fileCount');
+        const fileList = document.getElementById('fileList');
+        const uploadProgress = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const recordsContainer = document.getElementById('recordsContainer');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const recordCount = document.getElementById('recordCount');
+        
+        // Stats elements
+        const totalRecordsEl = document.getElementById('totalRecords');
+        const uniqueSKUsEl = document.getElementById('uniqueSKUs');
+        const newRecordsEl = document.getElementById('newRecords');
+        const duplicatesSkippedEl = document.getElementById('duplicatesSkipped');
+
+        let selectedFiles = [];
+        let booksonixRecords = [];
+
+        // Drag and drop functionality
+        fileDropArea.addEventListener('click', () => fileInput.click());
+
+        fileDropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.add('dragover');
+        });
+
+        fileDropArea.addEventListener('dragleave', () => {
+            fileDropArea.classList.remove('dragover');
+        });
+
+        fileDropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            handleFileSelection(files);
+        });
+
+        // File input change handler
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelection(e.target.files);
+        });
+
+        // Clear button handler
+        clearBtn.addEventListener('click', () => {
+            clearFileSelection();
+        });
+
+        // Refresh button handler
+        refreshBtn.addEventListener('click', loadRecords);
+
+        // Handle file selection
+        function handleFileSelection(files) {
+            selectedFiles = [];
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (file.name.match(/\.(xlsx|xls)$/i)) {
+                    selectedFiles.push({
+                        file: file,
+                        status: 'pending',
+                        message: ''
+                    });
+                }
+            }
+            
+            if (selectedFiles.length === 0) {
+                showStatus('Please select valid Excel files (.xlsx, .xls)', 'error');
+                return;
+            }
+            
+            updateFileDisplay();
+        }
+
+        // Clear file selection
+        function clearFileSelection() {
+            selectedFiles = [];
+            fileInput.value = '';
+            updateFileDisplay();
+            uploadProgress.style.display = 'none';
+        }
+
+        // Update file display
+        function updateFileDisplay() {
+            if (selectedFiles.length === 0) {
+                fileCount.style.display = 'none';
+                fileList.style.display = 'none';
+                clearBtn.style.display = 'none';
+                fileDropArea.innerHTML = `
+                    <div>📁 Drop Excel files here or click to browse</div>
+                    <div class="file-drop-text">Supports .xlsx and .xls files</div>
+                    <div class="file-count" id="fileCount" style="display: none;"></div>
+                `;
+                
+                // Re-add the input element
+                const newInput = document.createElement('input');
+                newInput.type = 'file';
+                newInput.id = 'fileInput';
+                newInput.accept = '.xlsx,.xls';
+                newInput.multiple = true;
+                newInput.style.display = 'none';
+                newInput.addEventListener('change', (e) => handleFileSelection(e.target.files));
+                fileDropArea.appendChild(newInput);
+                fileInput = newInput;
+            } else {
+                fileCount.textContent = `${selectedFiles.length} file(s) selected`;
+                fileCount.style.display = 'block';
+                clearBtn.style.display = 'block';
+                
+                // Update file list
+                fileList.innerHTML = '';
+                selectedFiles.forEach((fileInfo, index) => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
+                    
+                    const fileName = document.createElement('div');
+                    fileName.className = 'file-name';
+                    fileName.textContent = fileInfo.file.name;
+                    
+                    const fileSize = document.createElement('span');
+                    fileSize.className = 'file-size';
+                    fileSize.textContent = formatFileSize(fileInfo.file.size);
+                    
+                    const fileStatus = document.createElement('span');
+                    fileStatus.className = `file-status status-${fileInfo.status}`;
+                    fileStatus.textContent = fileInfo.status;
+                    
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'remove-file';
+                    removeBtn.textContent = '×';
+                    removeBtn.onclick = () => removeFile(index);
+                    
+                    fileItem.appendChild(fileName);
+                    fileItem.appendChild(fileSize);
+                    fileItem.appendChild(fileStatus);
+                    if (fileInfo.status === 'pending') {
+                        fileItem.appendChild(removeBtn);
+                    }
+                    
+                    fileList.appendChild(fileItem);
+                });
+                
+                fileList.style.display = 'block';
+            }
+        }
+
+        // Remove individual file
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            updateFileDisplay();
+        }
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        // Upload form handler
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (selectedFiles.length === 0) {
+                showStatus('Please select files to upload', 'error');
+                return;
+            }
+
+            uploadBtn.disabled = true;
+            clearBtn.disabled = true;
+            uploadProgress.style.display = 'block';
+            status.style.display = 'none';
+            
+            let successCount = 0;
+            let errorCount = 0;
+            let totalNewRecords = 0;
+            let totalDuplicates = 0;
+
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const fileInfo = selectedFiles[i];
+                
+                // Update progress
+                progressBar.style.width = `${((i + 1) / selectedFiles.length) * 100}%`;
+                progressText.textContent = `Processing file ${i + 1} of ${selectedFiles.length}: ${fileInfo.file.name}`;
+                
+                // Update file status
+                fileInfo.status = 'processing';
+                updateFileDisplay();
+                
+                const formData = new FormData();
+                formData.append('booksonixFile', fileInfo.file);
+
+                try {
+                    const response = await fetch('/api/booksonix/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        fileInfo.status = 'success';
+                        fileInfo.message = result.message;
+                        successCount++;
+                        totalNewRecords += result.newRecords || 0;
+                        totalDuplicates += result.duplicates || 0;
+                        
+                        // Update stats
+                        newRecordsEl.textContent = totalNewRecords;
+                        duplicatesSkippedEl.textContent = totalDuplicates;
+                    } else {
+                        fileInfo.status = 'error';
+                        fileInfo.message = result.error || 'Upload failed';
+                        errorCount++;
+                    }
+                } catch (error) {
+                    fileInfo.status = 'error';
+                    fileInfo.message = 'Network error: ' + error.message;
+                    errorCount++;
+                }
+                
+                updateFileDisplay();
+            }
+            
+            // Show final status
+            progressBar.style.width = '100%';
+            progressText.textContent = 'Processing complete!';
+            
+            let statusMessage = `Processed ${selectedFiles.length} file(s): ${successCount} successful`;
+            if (errorCount > 0) {
+                statusMessage += `, ${errorCount} failed`;
+            }
+            statusMessage += `. ${totalNewRecords} new records added`;
+            if (totalDuplicates > 0) {
+                statusMessage += `, ${totalDuplicates} duplicates skipped`;
+            }
+            
+            showStatus(statusMessage, errorCount === 0 ? 'success' : 'error');
+            
+            uploadBtn.disabled = false;
+            clearBtn.disabled = false;
+            
+            // Refresh data
+            loadRecords();
+            loadStats();
+            
+            // Auto-clear after successful upload
+            if (errorCount === 0) {
+                setTimeout(() => {
+                    clearFileSelection();
+                }, 3000);
+            }
+        });
+
+        // Show status message
+        function showStatus(message, type) {
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            // Hide status after 5 seconds for success messages
+            if (type === 'success') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Load and display records
+        async function loadRecords() {
+            try {
+                recordsContainer.innerHTML = '<div class="loading">Loading records...</div>';
+                
+                const response = await fetch('/api/booksonix/records');
+                const data = await response.json();
+                
+                booksonixRecords = data.records || [];
+                displayRecords();
+                
+            } catch (error) {
+                recordsContainer.innerHTML = '<div class="no-records">Error loading records: ' + error.message + '</div>';
+                recordCount.textContent = '';
+            }
+        }
+
+        // Display records
+        function displayRecords() {
+            if (booksonixRecords.length === 0) {
+                recordsContainer.innerHTML = '<div class="no-records">No Booksonix records found. Upload Excel files to get started!</div>';
+                recordCount.textContent = '';
+                return;
+            }
+
+            recordCount.textContent = `${booksonixRecords.length} record${booksonixRecords.length !== 1 ? 's' : ''} found`;
+
+            // Create table
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>ISBN</th>
+                        <th>TITLE</th>
+                        <th>AUTHOR</th>
+                        <th>PUBLISHER</th>
+                        <th>PRICE</th>
+                        <th>QUANTITY</th>
+                        <th>UPLOAD DATE</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${booksonixRecords.map(record => `
+                        <tr>
+                            <td>${record.sku || '-'}</td>
+                            <td>${record.isbn || '-'}</td>
+                            <td>${record.title || '-'}</td>
+                            <td>${record.author || '-'}</td>
+                            <td>${record.publisher || '-'}</td>
+                            <td>${record.price ? '£' + parseFloat(record.price).toFixed(2) : '-'}</td>
+                            <td>${record.quantity || 0}</td>
+                            <td>${record.upload_date ? new Date(record.upload_date).toLocaleDateString() : '-'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            `;
+
+            recordsContainer.innerHTML = '';
+            recordsContainer.appendChild(table);
+        }
+
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/booksonix/stats');
+                const stats = await response.json();
+                
+                totalRecordsEl.textContent = stats.totalRecords || 0;
+                uniqueSKUsEl.textContent = stats.uniqueSKUs || 0;
+                
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load data when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            loadRecords();
+            loadStats();
+        });
+    </script>
+</body>
+</html>
