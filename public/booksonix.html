@@ -505,7 +505,7 @@
             <div id="status" class="status"></div>
         </div>
 
-        <!-- Statistics Section -->
+        <!-- Statistics Section - UPDATED TO INCLUDE UNIQUE ISBNs -->
         <div class="stats-section">
             <div class="stat-card">
                 <div class="stat-number" id="totalRecords">0</div>
@@ -514,6 +514,10 @@
             <div class="stat-card">
                 <div class="stat-number" id="uniqueSKUs">0</div>
                 <div class="stat-label">Unique SKUs</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="uniqueISBNs">0</div>
+                <div class="stat-label">Unique ISBNs</div>
             </div>
             <div class="stat-card">
                 <div class="stat-number" id="newRecords">0</div>
@@ -563,9 +567,10 @@
         const refreshBtn = document.getElementById('refreshBtn');
         const recordCount = document.getElementById('recordCount');
         
-        // Stats elements
+        // Stats elements - UPDATED TO INCLUDE UNIQUE ISBNs
         const totalRecordsEl = document.getElementById('totalRecords');
         const uniqueSKUsEl = document.getElementById('uniqueSKUs');
+        const uniqueISBNsEl = document.getElementById('uniqueISBNs');
         const newRecordsEl = document.getElementById('newRecords');
         const duplicatesSkippedEl = document.getElementById('duplicatesSkipped');
 
@@ -841,7 +846,7 @@
             }
         }
 
-        // Display records - UPDATED WITHOUT AUTHOR AND QUANTITY COLUMNS
+        // Display records
         function displayRecords() {
             if (booksonixRecords.length === 0) {
                 recordsContainer.innerHTML = '<div class="no-records">No Booksonix records found. Upload Excel files to get started!</div>';
@@ -851,7 +856,7 @@
 
             recordCount.textContent = `${booksonixRecords.length} record${booksonixRecords.length !== 1 ? 's' : ''} found`;
 
-            // Create table - REMOVED AUTHOR AND QUANTITY COLUMNS
+            // Create table
             const table = document.createElement('table');
             table.innerHTML = `
                 <thead>
@@ -882,7 +887,7 @@
             recordsContainer.appendChild(table);
         }
 
-        // Load statistics
+        // Load statistics - UPDATED TO INCLUDE UNIQUE ISBNs
         async function loadStats() {
             try {
                 const response = await fetch('/api/booksonix/stats');
@@ -890,6 +895,15 @@
                 
                 totalRecordsEl.textContent = stats.totalRecords || 0;
                 uniqueSKUsEl.textContent = stats.uniqueSKUs || 0;
+                uniqueISBNsEl.textContent = stats.uniqueISBNs || 0;
+                
+                // If the backend doesn't return uniqueISBNs yet, calculate it from records
+                if (!stats.uniqueISBNs && booksonixRecords.length > 0) {
+                    const uniqueISBNSet = new Set(booksonixRecords
+                        .filter(r => r.isbn)
+                        .map(r => r.isbn));
+                    uniqueISBNsEl.textContent = uniqueISBNSet.size;
+                }
                 
             } catch (error) {
                 console.error('Error loading stats:', error);
