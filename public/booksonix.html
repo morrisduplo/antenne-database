@@ -463,6 +463,104 @@
             color: #7f8c8d;
             font-size: 14px;
         }
+
+        /* Pagination styles */
+        .pagination-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .pagination-info {
+            color: #666;
+            font-size: 13px;
+        }
+
+        .pagination-info strong {
+            color: #333;
+            font-weight: bold;
+        }
+
+        .pagination-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .pagination-btn {
+            padding: 6px 12px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
+            color: #333;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            background: #e9ecef;
+            border-color: #999;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background: #f8f9fa;
+        }
+
+        .pagination-btn.active {
+            background: #333;
+            color: white;
+            border-color: #333;
+        }
+
+        .page-input-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .page-input {
+            width: 60px;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .page-input:focus {
+            outline: none;
+            border-color: #333;
+        }
+
+        .per-page-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .per-page-selector select {
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            background: white;
+            cursor: pointer;
+        }
+
+        .per-page-selector select:focus {
+            outline: none;
+            border-color: #333;
+        }
     </style>
 </head>
 <body>
@@ -539,8 +637,68 @@
                 </div>
             </div>
             
+            <!-- Pagination Top -->
+            <div id="paginationTop" class="pagination-container" style="display: none;">
+                <div class="pagination-info">
+                    Page <strong id="currentPageTop">1</strong> of <strong id="totalPagesTop">1</strong> 
+                    (<span id="totalRecordsTop">0</span> total records, showing <span id="showingRecordsTop">0</span> on this page)
+                </div>
+                <div class="pagination-controls">
+                    <button class="pagination-btn" id="firstPageTop">First</button>
+                    <button class="pagination-btn" id="prevPageTop">← Previous</button>
+                    <div class="page-input-container">
+                        <span>Page</span>
+                        <input type="number" class="page-input" id="pageInputTop" value="1" min="1">
+                        <span>of <span id="totalPagesTop2">1</span></span>
+                    </div>
+                    <button class="pagination-btn" id="nextPageTop">Next →</button>
+                    <button class="pagination-btn" id="lastPageTop">Last</button>
+                </div>
+                <div class="per-page-selector">
+                    <label>Show:</label>
+                    <select id="perPageSelectTop">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="250">250</option>
+                        <option value="500" selected>500</option>
+                        <option value="1000">1000</option>
+                    </select>
+                    <span>per page</span>
+                </div>
+            </div>
+            
             <div id="recordsContainer">
                 <div class="loading">Loading records...</div>
+            </div>
+            
+            <!-- Pagination Bottom -->
+            <div id="paginationBottom" class="pagination-container" style="display: none;">
+                <div class="pagination-info">
+                    Page <strong id="currentPageBottom">1</strong> of <strong id="totalPagesBottom">1</strong> 
+                    (<span id="totalRecordsBottom">0</span> total records, showing <span id="showingRecordsBottom">0</span> on this page)
+                </div>
+                <div class="pagination-controls">
+                    <button class="pagination-btn" id="firstPageBottom">First</button>
+                    <button class="pagination-btn" id="prevPageBottom">← Previous</button>
+                    <div class="page-input-container">
+                        <span>Page</span>
+                        <input type="number" class="page-input" id="pageInputBottom" value="1" min="1">
+                        <span>of <span id="totalPagesBottom2">1</span></span>
+                    </div>
+                    <button class="pagination-btn" id="nextPageBottom">Next →</button>
+                    <button class="pagination-btn" id="lastPageBottom">Last</button>
+                </div>
+                <div class="per-page-selector">
+                    <label>Show:</label>
+                    <select id="perPageSelectBottom">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="250">250</option>
+                        <option value="500" selected>500</option>
+                        <option value="1000">1000</option>
+                    </select>
+                    <span>per page</span>
+                </div>
             </div>
         </div>
     </div>
@@ -576,6 +734,10 @@
 
         let selectedFiles = [];
         let booksonixRecords = [];
+        let allRecords = []; // Store all records for pagination
+        let currentPage = 1;
+        let recordsPerPage = 500;
+        let totalPages = 1;
 
         // Drag and drop functionality
         fileDropArea.addEventListener('click', () => fileInput.click());
@@ -829,16 +991,36 @@
             }
         }
 
-        // Load and display records
-        async function loadRecords() {
+        // Load and display records with pagination
+        async function loadRecords(page = 1) {
             try {
                 recordsContainer.innerHTML = '<div class="loading">Loading records...</div>';
                 
-                const response = await fetch('/api/booksonix/records');
+                // Update current page
+                currentPage = page;
+                
+                // Fetch records with pagination parameters
+                const response = await fetch(`/api/booksonix/records?page=${page}&limit=${recordsPerPage}`);
                 const data = await response.json();
                 
+                // Store the fetched records
                 booksonixRecords = data.records || [];
+                
+                // Update total records count if provided
+                const totalRecords = data.totalRecords || booksonixRecords.length;
+                totalPages = Math.ceil(totalRecords / recordsPerPage);
+                
+                // Display the records
                 displayRecords();
+                
+                // Update pagination controls
+                updatePaginationControls(totalRecords);
+                
+                // Show pagination if there are records
+                if (booksonixRecords.length > 0) {
+                    document.getElementById('paginationTop').style.display = 'flex';
+                    document.getElementById('paginationBottom').style.display = 'flex';
+                }
                 
             } catch (error) {
                 recordsContainer.innerHTML = '<div class="no-records">Error loading records: ' + error.message + '</div>';
@@ -851,16 +1033,20 @@
             if (booksonixRecords.length === 0) {
                 recordsContainer.innerHTML = '<div class="no-records">No Booksonix records found. Upload Excel files to get started!</div>';
                 recordCount.textContent = '';
+                document.getElementById('paginationTop').style.display = 'none';
+                document.getElementById('paginationBottom').style.display = 'none';
                 return;
             }
 
-            recordCount.textContent = `${booksonixRecords.length} record${booksonixRecords.length !== 1 ? 's' : ''} found`;
+            const startIndex = (currentPage - 1) * recordsPerPage;
+            recordCount.textContent = `Showing ${booksonixRecords.length} record${booksonixRecords.length !== 1 ? 's' : ''}`;
 
             // Create table
             const table = document.createElement('table');
             table.innerHTML = `
                 <thead>
                     <tr>
+                        <th>#</th>
                         <th>SKU</th>
                         <th>ISBN</th>
                         <th>TITLE</th>
@@ -870,8 +1056,9 @@
                     </tr>
                 </thead>
                 <tbody>
-                    ${booksonixRecords.map(record => `
+                    ${booksonixRecords.map((record, index) => `
                         <tr>
+                            <td>${startIndex + index + 1}</td>
                             <td>${record.sku || '-'}</td>
                             <td>${record.isbn || '-'}</td>
                             <td>${record.title || '-'}</td>
@@ -885,6 +1072,77 @@
 
             recordsContainer.innerHTML = '';
             recordsContainer.appendChild(table);
+        }
+
+        // Update pagination controls
+        function updatePaginationControls(totalRecords) {
+            // Update page info for both top and bottom
+            ['Top', 'Bottom'].forEach(position => {
+                document.getElementById(`currentPage${position}`).textContent = currentPage;
+                document.getElementById(`totalPages${position}`).textContent = totalPages;
+                document.getElementById(`totalPages${position}2`).textContent = totalPages;
+                document.getElementById(`totalRecords${position}`).textContent = totalRecords.toLocaleString();
+                document.getElementById(`showingRecords${position}`).textContent = booksonixRecords.length;
+                document.getElementById(`pageInput${position}`).value = currentPage;
+                document.getElementById(`pageInput${position}`).max = totalPages;
+                
+                // Update button states
+                document.getElementById(`firstPage${position}`).disabled = currentPage === 1;
+                document.getElementById(`prevPage${position}`).disabled = currentPage === 1;
+                document.getElementById(`nextPage${position}`).disabled = currentPage === totalPages;
+                document.getElementById(`lastPage${position}`).disabled = currentPage === totalPages;
+                
+                // Update per page selector
+                document.getElementById(`perPageSelect${position}`).value = recordsPerPage;
+            });
+        }
+
+        // Initialize pagination controls
+        function initializePaginationControls() {
+            // Handle page navigation buttons
+            ['Top', 'Bottom'].forEach(position => {
+                document.getElementById(`firstPage${position}`).addEventListener('click', () => loadRecords(1));
+                document.getElementById(`lastPage${position}`).addEventListener('click', () => loadRecords(totalPages));
+                document.getElementById(`prevPage${position}`).addEventListener('click', () => {
+                    if (currentPage > 1) loadRecords(currentPage - 1);
+                });
+                document.getElementById(`nextPage${position}`).addEventListener('click', () => {
+                    if (currentPage < totalPages) loadRecords(currentPage + 1);
+                });
+                
+                // Handle page input
+                const pageInput = document.getElementById(`pageInput${position}`);
+                pageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        const page = parseInt(pageInput.value);
+                        if (page >= 1 && page <= totalPages) {
+                            loadRecords(page);
+                        } else {
+                            pageInput.value = currentPage;
+                        }
+                    }
+                });
+                
+                pageInput.addEventListener('blur', () => {
+                    const page = parseInt(pageInput.value);
+                    if (page >= 1 && page <= totalPages) {
+                        if (page !== currentPage) {
+                            loadRecords(page);
+                        }
+                    } else {
+                        pageInput.value = currentPage;
+                    }
+                });
+                
+                // Handle per page selector
+                document.getElementById(`perPageSelect${position}`).addEventListener('change', (e) => {
+                    recordsPerPage = parseInt(e.target.value);
+                    currentPage = 1; // Reset to first page
+                    loadRecords(1);
+                    // Sync both selectors
+                    document.getElementById(`perPageSelect${position === 'Top' ? 'Bottom' : 'Top'}`).value = recordsPerPage;
+                });
+            });
         }
 
         // Load statistics - UPDATED TO INCLUDE UNIQUE ISBNs
@@ -912,7 +1170,8 @@
 
         // Load data when page loads
         document.addEventListener('DOMContentLoaded', () => {
-            loadRecords();
+            initializePaginationControls();
+            loadRecords(1);
             loadStats();
         });
     </script>
