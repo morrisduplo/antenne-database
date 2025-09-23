@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Management - Antenne Books</title>
+    
+    <!-- Authentication Check Script -->
+    <script>
+        // Authentication check for protected pages
+        (function() {
+            // Check authentication
+            const session = localStorage.getItem('userSession');
+            
+            if (!session) {
+                // No session, redirect to login
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            try {
+                const sessionData = JSON.parse(session);
+                
+                // Check if session is still valid
+                const maxAge = sessionData.remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+                if (new Date() - new Date(sessionData.timestamp) > maxAge) {
+                    // Session expired
+                    localStorage.removeItem('userSession');
+                    window.location.href = '/login.html';
+                    return;
+                }
+                
+                // Store user info globally for the page to use
+                window.currentUser = sessionData;
+                
+            } catch (e) {
+                // Invalid session data
+                localStorage.removeItem('userSession');
+                window.location.href = '/login.html';
+            }
+        })();
+        
+        function logout() {
+            localStorage.removeItem('userSession');
+            window.location.href = '/login.html';
+        }
+    </script>
+    
+    <!-- Import Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier', monospace;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'EB Garamond', serif;
+            font-weight: 400;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #f1f3f4;
+            padding-bottom: 20px;
+        }
+
+        h1 {
+            color: #333333;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-info {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .user-info strong {
+            color: #333;
+        }
+
+        .btn-logout {
+            background: #dc3545;
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-decoration: none;
+            transition: background-color 0.3s;
+        }
+
+        .btn-logout:hover {
+            background: #c82333;
+        }
+
+        .back-link {
+            color: #666;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid #666;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .back-link:hover {
+            background: #f1f3f4;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .filters {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .search-box {
+            width: 300px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier', monospace;
+            font-size: 12px;
+        }
+
+        select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier', monospace;
+            font-size: 12px;
+        }
+
+        button {
+            background: #000000;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background: #333333;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 12px;
+        }
+
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+            line-height: 1.2;
+        }
+
+        th {
+            background-color: #34495e;
+            color: white;
+            font-weight: normal;
+            font-family: 'Courier', monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+            font-style: italic;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
+
+        .info-message {
+            background: #d1ecf1;
+            color: #0c5460;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #bee5eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Customer Management</h1>
+            <div class="header-right">
+                <span class="user-info">Logged in as: <strong id="currentUserName">User</strong></span>
+                <button class="btn-logout" onclick="logout()">Logout</button>
+                <a href="/" class="back-link">← Back to Dashboard</a>
+            </div>
+        </div>
+
+        <!-- Info Message -->
+        <div class="info-message">
+            <strong>Note:</strong> This page displays customer data from your configured data source. 
+            Connect your customer table to populate this view.
+        </div>
+
+        <!-- Error Message -->
+        <div id="errorMessage" class="error-message" style="display: none;">
+            <strong>Error:</strong> <span id="errorText"></span>
+        </div>
+
+        <!-- Statistics -->
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalCustomers">-</div>
+                <div class="stat-label">Total Customers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalCountries">-</div>
+                <div class="stat-label">Countries</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalCities">-</div>
+                <div class="stat-label">Cities</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalOrders">-</div>
+                <div class="stat-label">Total Orders</div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <div class="filter-group">
+                <input type="text" id="searchBox" class="search-box" placeholder="Search customers...">
+            </div>
+            <div class="filter-group">
+                <label>Country:</label>
+                <select id="countryFilter">
+                    <option value="">All Countries</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>City:</label>
+                <select id="cityFilter">
+                    <option value="">All Cities</option>
+                </select>
+            </div>
+            <button id="refreshBtn">Refresh Data</button>
+        </div>
+
+        <!-- Customer Table -->
+        <div id="customersContainer">
+            <div class="loading">Loading customer data...</div>
+        </div>
+    </div>
+
+    <script>
+        // Display current user
+        if (window.currentUser) {
+            document.getElementById('currentUserName').textContent = window.currentUser.username;
+        }
+        
+        // DOM elements
+        const customersContainer = document.getElementById('customersContainer');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const searchBox = document.getElementById('searchBox');
+        const countryFilter = document.getElementById('countryFilter');
+        const cityFilter = document.getElementById('cityFilter');
+        const totalCustomers = document.getElementById('totalCustomers');
+        const totalCountries = document.getElementById('totalCountries');
+        const totalCities = document.getElementById('totalCities');
+        const totalOrders = document.getElementById('totalOrders');
+        const errorMessage = document.getElementById('errorMessage');
+        const errorText = document.getElementById('errorText');
+
+        let customersData = [];
+        let filteredData = [];
+
+        // Event listeners
+        refreshBtn.addEventListener('click', loadCustomers);
+        searchBox.addEventListener('input', filterCustomers);
+        countryFilter.addEventListener('change', filterCustomers);
+        cityFilter.addEventListener('change', filterCustomers);
+
+        function showError(message) {
+            errorText.textContent = message;
+            errorMessage.style.display = 'block';
+            console.error('Customer page error:', message);
+        }
+
+        function hideError() {
+            errorMessage.style.display = 'none';
+        }
+
+        // Load customer data
+        async function loadCustomers() {
+            try {
+                hideError();
+                customersContainer.innerHTML = '<div class="loading">Loading customer data...</div>';
+                
+                const response = await fetch('/api/customers');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                customersData = data.customers || [];
+                filteredData = [...customersData];
+                
+                if (data.stats) {
+                    updateStats(data.stats);
+                }
+                
+                updateFilters();
+                displayCustomers();
+                
+            } catch (error) {
+                console.error('Load customers error:', error);
+                showError(error.message);
+                customersContainer.innerHTML = `<div class="no-data">Error loading customer data: ${error.message}</div>`;
+            }
+        }
+
+        // Update statistics
+        function updateStats(stats) {
+            totalCustomers.textContent = (stats.total_customers || 0).toLocaleString();
+            totalCountries.textContent = stats.total_countries || 0;
+            totalCities.textContent = stats.total_cities || 0;
+            totalOrders.textContent = (stats.total_orders || 0).toLocaleString();
+        }
+
+        // Update filter dropdowns
+        function updateFilters() {
+            // Update country filter
+            const countries = [...new Set(customersData.map(c => c.country))].sort();
+            countryFilter.innerHTML = '<option value="">All Countries</option>';
+            countries.forEach(country => {
+                if (country) {
+                    const option = document.createElement('option');
+                    option.value = country;
+                    option.textContent = country;
+                    countryFilter.appendChild(option);
+                }
+            });
+            
+            // Update city filter
+            const cities = [...new Set(customersData.map(c => c.city))].sort();
+            cityFilter.innerHTML = '<option value="">All Cities</option>';
+            cities.forEach(city => {
+                if (city) {
+                    const option = document.createElement('option');
+                    option.value = city;
+                    option.textContent = city;
+                    cityFilter.appendChild(option);
+                }
+            });
+        }
+
+        // Filter customers
+        function filterCustomers() {
+            const searchTerm = searchBox.value.toLowerCase();
+            const selectedCountry = countryFilter.value;
+            const selectedCity = cityFilter.value;
+            
+            filteredData = customersData.filter(customer => {
+                const matchesSearch = !searchTerm || 
+                    customer.customer_name.toLowerCase().includes(searchTerm);
+                const matchesCountry = !selectedCountry || customer.country === selectedCountry;
+                const matchesCity = !selectedCity || customer.city === selectedCity;
+                
+                return matchesSearch && matchesCountry && matchesCity;
+            });
+            
+            displayCustomers();
+        }
+
+        // Display customers table
+        function displayCustomers() {
+            if (filteredData.length === 0) {
+                if (customersData.length === 0) {
+                    customersContainer.innerHTML = '<div class="no-data">No customer data available. Please configure your data source.</div>';
+                } else {
+                    customersContainer.innerHTML = '<div class="no-data">No customers match your search criteria.</div>';
+                }
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Customer Name</th>
+                        <th>Country</th>
+                        <th>City</th>
+                        <th>Total Orders</th>
+                        <th>Total Quantity</th>
+                        <th>Total Revenue</th>
+                        <th>Last Order</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${filteredData.map(customer => `
+                        <tr>
+                            <td>${customer.customer_name || 'N/A'}</td>
+                            <td>${customer.country || 'Unknown'}</td>
+                            <td>${customer.city || 'Unknown'}</td>
+                            <td>${customer.total_orders || 0}</td>
+                            <td>${customer.total_quantity || 0}</td>
+                            <td>£${parseFloat(customer.total_revenue || 0).toFixed(2)}</td>
+                            <td>${customer.last_order ? new Date(customer.last_order).toLocaleDateString() : 'N/A'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            `;
+
+            customersContainer.innerHTML = '';
+            customersContainer.appendChild(table);
+        }
+
+        // Load customers when page loads
+        loadCustomers();
+    </script>
+</body>
+</html>
