@@ -192,6 +192,20 @@
             margin-top: 10px;
         }
 
+        .upload-note {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 15px;
+        }
+
+        .upload-note strong {
+            color: #856404;
+        }
+
         .file-list {
             margin-top: 20px;
             max-height: 200px;
@@ -612,6 +626,12 @@
         <!-- Upload Section -->
         <div class="upload-section">
             <h2>Upload Booksonix Data</h2>
+            
+            <!-- Note about SKU cleaning -->
+            <div class="upload-note">
+                <strong>Note:</strong> SKU values (Column A) will be automatically cleaned during upload. Any hyphens (-) will be removed to keep only the numeric values.
+            </div>
+            
             <form id="uploadForm" class="upload-form">
                 <div class="file-drop-area" id="fileDropArea">
                     <div>📁 Drop Excel files here or click to browse</div>
@@ -973,6 +993,13 @@
                         // Update stats
                         newRecordsEl.textContent = totalNewRecords;
                         duplicatesSkippedEl.textContent = totalDuplicates;
+                        
+                        // Log the cleaning info
+                        console.log(`File processed: ${fileInfo.file.name}`, {
+                            newRecords: result.newRecords,
+                            duplicates: result.duplicates,
+                            message: 'SKUs cleaned (hyphens removed)'
+                        });
                     } else {
                         fileInfo.status = 'error';
                         fileInfo.message = result.error || 'Upload failed';
@@ -999,6 +1026,7 @@
             if (totalDuplicates > 0) {
                 statusMessage += `, ${totalDuplicates} duplicates skipped`;
             }
+            statusMessage += '. SKUs cleaned (hyphens removed).';
             
             showStatus(statusMessage, errorCount === 0 ? 'success' : 'error');
             
