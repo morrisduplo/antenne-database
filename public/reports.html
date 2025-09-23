@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generate Stockist Reports - Antenne Books</title>
+    
+    <!-- Authentication Check Script -->
+    <script>
+        // Authentication check for protected pages
+        (function() {
+            // List of pages that require admin role
+            const adminOnlyPages = ['/settings', '/settings.html'];
+            
+            // Check authentication
+            const session = localStorage.getItem('userSession');
+            
+            if (!session) {
+                // No session, redirect to login
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            try {
+                const sessionData = JSON.parse(session);
+                
+                // Check if session is still valid
+                const maxAge = sessionData.remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+                if (new Date() - new Date(sessionData.timestamp) > maxAge) {
+                    // Session expired
+                    localStorage.removeItem('userSession');
+                    window.location.href = '/login.html';
+                    return;
+                }
+                
+                // Check role-based access
+                const currentPath = window.location.pathname;
+                const isAdminPage = adminOnlyPages.some(page => currentPath.includes(page));
+                
+                if (isAdminPage && sessionData.role !== 'admin') {
+                    // Editor trying to access admin page
+                    alert('Access denied. Admin privileges required.');
+                    window.location.href = '/';
+                    return;
+                }
+                
+                // Store user info globally for the page to use
+                window.currentUser = sessionData;
+                
+            } catch (e) {
+                // Invalid session data
+                localStorage.removeItem('userSession');
+                window.location.href = '/login.html';
+            }
+        })();
+        
+        function logout() {
+            localStorage.removeItem('userSession');
+            window.location.href = '/login.html';
+        }
+    </script>
+    
+    <!-- Import Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier', monospace;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'EB Garamond', serif;
+            font-weight: 400;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #f1f3f4;
+            padding-bottom: 20px;
+        }
+
+        h1 {
+            color: #333333;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-info {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .user-info strong {
+            color: #333;
+        }
+
+        .btn-logout {
+            background: #dc3545;
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-decoration: none;
+            transition: background-color 0.3s;
+        }
+
+        .btn-logout:hover {
+            background: #c82333;
+        }
+
+        .back-link {
+            color: #666;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid #666;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .back-link:hover {
+            background: #f1f3f4;
+        }
+
+        .report-form {
+            background: #ecf0f1;
+            padding: 25px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+
+        .form-section {
+            margin-bottom: 25px;
+        }
+
+        .form-section h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 20px;
+            align-items: end;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .form-group label {
+            font-weight: bold;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .form-group input,
+        .form-group select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier', monospace;
+            font-size: 12px;
+            min-width: 150px;
+        }
+
+        /* Autocomplete styles */
+        .autocomplete-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+        }
+
+        .title-search-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier', monospace;
+            font-size: 14px;
+        }
+
+        .autocomplete-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .autocomplete-item {
+            padding: 10px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .autocomplete-item:hover,
+        .autocomplete-item.highlighted {
+            background: #f0f0f0;
+        }
+
+        .autocomplete-item:last-child {
+            border-bottom: none;
+        }
+
+        .selected-titles-container {
+            margin-top: 15px;
+        }
+
+        .selected-titles-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+            min-height: 40px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #f8f9fa;
+        }
+
+        .selected-title-tag {
+            display: inline-flex;
+            align-items: center;
+            background: #007bff;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            gap: 5px;
+        }
+
+        .remove-title {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 0;
+            margin: 0;
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+
+        .remove-title:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .no-titles-selected {
+            color: #666;
+            font-style: italic;
+            font-size: 12px;
+            padding: 5px;
+        }
+
+        button {
+            background: #000000;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background: #333333;
+        }
+
+        button:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
+
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #c3e6cb;
+        }
+
+        .report-results {
+            margin-top: 30px;
+        }
+
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+
+        .report-title {
+            font-size: 18px;
+            margin: 0;
+        }
+
+        .report-summary {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .export-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .country-section {
+            margin-bottom: 30px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .country-header {
+            background: #34495e;
+            color: white;
+            padding: 15px;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        .city-section {
+            border-bottom: 1px solid #eee;
+        }
+
+        .city-header {
+            background: #ecf0f1;
+            padding: 12px 15px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .customer-list {
+            padding: 0;
+        }
+
+        .customer-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 12px;
+        }
+
+        .customer-item:last-child {
+            border-bottom: none;
+        }
+
+        .customer-item:hover {
+            background: #f8f9fa;
+        }
+
+        .customer-name {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .customer-details {
+            color: #666;
+            font-size: 11px;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+            font-style: italic;
+        }
+
+        .search-filters {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-input {
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Generate Stockist Reports</h1>
+            <div class="header-right">
+                <span class="user-info">Logged in as: <strong id="currentUserName">User</strong></span>
+                <button class="btn-logout" onclick="logout()">Logout</button>
+                <a href="/" class="back-link">← Back to Dashboard</a>
+            </div>
+        </div>
+
+        <!-- Error/Success Messages -->
+        <div id="errorMessage" class="error-message" style="display: none;">
+            <strong>Error:</strong> <span id="errorText"></span>
+        </div>
+        <div id="successMessage" class="success-message" style="display: none;">
+            <span id="successText"></span>
+        </div>
+
+        <!-- Report Generation Form -->
+        <div class="report-form">
+            <h2>Generate Customer Report by Titles</h2>
+            
+            <div class="form-section">
+                <h3>Report Settings</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="publisherName">Publisher Name:</label>
+                        <input type="text" id="publisherName" placeholder="Enter publisher name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="startDate">Start Date:</label>
+                        <input type="date" id="startDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="endDate">End Date:</label>
+                        <input type="date" id="endDate" required>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Select Titles</h3>
+                <div class="form-group">
+                    <label for="titleSearch">Search and Add Titles:</label>
+                    <div class="autocomplete-container">
+                        <input type="text" id="titleSearch" class="title-search-input" 
+                               placeholder="Start typing to search for titles..." autocomplete="off">
+                        <div id="autocompleteDropdown" class="autocomplete-dropdown"></div>
+                    </div>
+                </div>
+                
+                <div class="selected-titles-container">
+                    <label>Selected Titles:</label>
+                    <div id="selectedTitlesList" class="selected-titles-list">
+                        <div class="no-titles-selected">No titles selected. Start typing above to add titles.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <button type="button" id="generateReportBtn">Generate Report</button>
+                <button type="button" id="clearFormBtn" class="btn-secondary">Clear Form</button>
+            </div>
+        </div>
+
+        <!-- Report Results -->
+        <div id="reportResults" class="report-results" style="display: none;">
+            <div class="report-header">
+                <div>
+                    <h2 class="report-title" id="reportTitle">Customer Report</h2>
+                    <div class="report-summary" id="reportSummary"></div>
+                </div>
+                <div class="export-buttons">
+                    <button type="button" id="exportExcelBtn" class="btn-secondary">Export Excel</button>
+                    <button type="button" id="exportTxtBtn" class="btn-secondary">Export TXT</button>
+                    <button type="button" id="exportPrintBtn" class="btn-secondary">Print Report</button>
+                </div>
+            </div>
+
+            <div class="search-filters">
+                <div class="filter-row">
+                    <label>Filter Results:</label>
+                    <input type="text" id="filterCustomer" class="filter-input" placeholder="Search customers...">
+                    <select id="filterCountry" class="filter-input">
+                        <option value="">All Countries</option>
+                    </select>
+                    <select id="filterCity" class="filter-input">
+                        <option value="">All Cities</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="reportContent">
+                <div class="loading">Generating report...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Display current user
+        if (window.currentUser) {
+            document.getElementById('currentUserName').textContent = window.currentUser.username;
+        }
+        
+        // Global variables
+        let availableTitles = [];
+        let selectedTitles = [];
+        let reportData = [];
+        let currentHighlightIndex = -1;
+
+        // DOM elements
+        const publisherName = document.getElementById('publisherName');
+        const startDate = document.getElementById('startDate');
+        const endDate = document.getElementById('endDate');
+        const titleSearch = document.getElementById('titleSearch');
+        const autocompleteDropdown = document.getElementById('autocompleteDropdown');
+        const selectedTitlesList = document.getElementById('selectedTitlesList');
+        const generateReportBtn = document.getElementById('generateReportBtn');
+        const clearFormBtn = document.getElementById('clearFormBtn');
+        const reportResults = document.getElementById('reportResults');
+        const reportTitle = document.getElementById('reportTitle');
+        const reportSummary = document.getElementById('reportSummary');
+        const reportContent = document.getElementById('reportContent');
+        const exportExcelBtn = document.getElementById('exportExcelBtn');
+        const exportTxtBtn = document.getElementById('exportTxtBtn');
+        const exportPrintBtn = document.getElementById('exportPrintBtn');
+        const filterCustomer = document.getElementById('filterCustomer');
+        const filterCountry = document.getElementById('filterCountry');
+        const filterCity = document.getElementById('filterCity');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const errorText = document.getElementById('errorText');
+        const successText = document.getElementById('successText');
+
+        // Country code to full name mapping - Complete global list
+        const countryCodeMap = {
+            // Europe
+            'UK': 'United Kingdom',
+            'GB': 'United Kingdom',
+            'FR': 'France',
+            'DE': 'Germany',
+            'IT': 'Italy',
+            'ES': 'Spain',
+            'NL': 'Netherlands',
+            'BE': 'Belgium',
+            'AT': 'Austria',
+            'CH': 'Switzerland',
+            'SE': 'Sweden',
+            'NO': 'Norway',
+            'DK': 'Denmark',
+            'FI': 'Finland',
+            'PL': 'Poland',
+            'PT': 'Portugal',
+            'IE': 'Ireland',
+            'CZ': 'Czech Republic',
+            'HU': 'Hungary',
+            'RO': 'Romania',
+            'GR': 'Greece',
+            'BG': 'Bulgaria',
+            'HR': 'Croatia',
+            'SK': 'Slovakia',
+            'SI': 'Slovenia',
+            'LT': 'Lithuania',
+            'LV': 'Latvia',
+            'EE': 'Estonia',
+            'LU': 'Luxembourg',
+            'MT': 'Malta',
+            'CY': 'Cyprus',
+            'IS': 'Iceland',
+            'LI': 'Liechtenstein',
+            'MC': 'Monaco',
+            'SM': 'San Marino',
+            'VA': 'Vatican City',
+            'AD': 'Andorra',
+            'RS': 'Serbia',
+            'ME': 'Montenegro',
+            'MK': 'North Macedonia',
+            'AL': 'Albania',
+            'BA': 'Bosnia and Herzegovina',
+            'XK': 'Kosovo',
+            'MD': 'Moldova',
+            'UA': 'Ukraine',
+            'BY': 'Belarus',
+            'RU': 'Russia',
+            
+            // Americas
+            'US': 'United States',
+            'USA': 'United States',
+            'CA': 'Canada',
+            'MX': 'Mexico',
+            'BR': 'Brazil',
+            'AR': 'Argentina',
+            'CL': 'Chile',
+            'CO': 'Colombia',
+            'PE': 'Peru',
+            'VE': 'Venezuela',
+            'EC': 'Ecuador',
+            'BO': 'Bolivia',
+            'PY': 'Paraguay',
+            'UY': 'Uruguay',
+            'GY': 'Guyana',
+            'SR': 'Suriname',
+            'GF': 'French Guiana',
+            'CR': 'Costa Rica',
+            'PA': 'Panama',
+            'NI': 'Nicaragua',
+            'HN': 'Honduras',
+            'SV': 'El Salvador',
+            'GT': 'Guatemala',
+            'BZ': 'Belize',
+            'CU': 'Cuba',
+            'DO': 'Dominican Republic',
+            'HT': 'Haiti',
+            'JM': 'Jamaica',
+            'TT': 'Trinidad and Tobago',
+            'BB': 'Barbados',
+            'BS': 'Bahamas',
+            'AG': 'Antigua and Barbuda',
+            'DM': 'Dominica',
+            'GD': 'Grenada',
+            'KN': 'Saint Kitts and Nevis',
+            'LC': 'Saint Lucia',
+            'VC': 'Saint Vincent and the Grenadines',
+            
+            // Asia
+            'CN': 'China',
+            'JP': 'Japan',
+            'KR': 'South Korea',
+            'KP': 'North Korea',
+            'IN': 'India',
+            'PK': 'Pakistan',
+            'BD': 'Bangladesh',
+            'LK': 'Sri Lanka',
+            'NP': 'Nepal',
+            'BT': 'Bhutan',
+            'MM': 'Myanmar',
+            'TH': 'Thailand',
+            'VN': 'Vietnam',
+            'LA': 'Laos',
+            'KH': 'Cambodia',
+            'MY': 'Malaysia',
+            'SG': 'Singapore',
+            'ID': 'Indonesia',
+            'PH': 'Philippines',
+            'TL': 'Timor-Leste',
+            'BN': 'Brunei',
+            'TW': 'Taiwan',
+            'HK': 'Hong Kong',
+            'MO': 'Macau',
+            'MN': 'Mongolia',
+            'KZ': 'Kazakhstan',
+            'UZ': 'Uzbekistan',
+            'TM': 'Turkmenistan',
+            'KG': 'Kyrgyzstan',
+            'TJ': 'Tajikistan',
+            'AF': 'Afghanistan',
+            'IR': 'Iran',
+            'IQ': 'Iraq',
+            'SY': 'Syria',
+            'LB': 'Lebanon',
+            'JO': 'Jordan',
+            'IL': 'Israel',
+            'PS': 'Palestine',
+            'SA': 'Saudi Arabia',
+            'YE': 'Yemen',
+            'OM': 'Oman',
+            'AE': 'United Arab Emirates',
+            'QA': 'Qatar',
+            'BH': 'Bahrain',
+            'KW': 'Kuwait',
+            'TR': 'Turkey',
+            'GE': 'Georgia',
+            'AM': 'Armenia',
+            'AZ': 'Azerbaijan',
+            'MV': 'Maldives',
+            
+            // Africa
+            'ZA': 'South Africa',
+            'EG': 'Egypt',
+            'NG': 'Nigeria',
+            'ET': 'Ethiopia',
+            'KE': 'Kenya',
+            'UG': 'Uganda',
+            'TZ': 'Tanzania',
+            'GH': 'Ghana',
+            'CI': 'Ivory Coast',
+            'SN': 'Senegal',
+            'ML': 'Mali',
+            'BF': 'Burkina Faso',
+            'NE': 'Niger',
+            'TD': 'Chad',
+            'SD': 'Sudan',
+            'SS': 'South Sudan',
+            'DZ': 'Algeria',
+            'MA': 'Morocco',
+            'TN': 'Tunisia',
+            'LY': 'Libya',
+            'MR': 'Mauritania',
+            'ER': 'Eritrea',
+            'DJ': 'Djibouti',
+            'SO': 'Somalia',
+            'RW': 'Rwanda',
+            'BI': 'Burundi',
+            'CM': 'Cameroon',
+            'CF': 'Central African Republic',
+            'CG': 'Republic of the Congo',
+            'CD': 'Democratic Republic of the Congo',
+            'GA': 'Gabon',
+            'GQ': 'Equatorial Guinea',
+            'AO': 'Angola',
+            'ZM': 'Zambia',
+            'ZW': 'Zimbabwe',
+            'NA': 'Namibia',
+            'BW': 'Botswana',
+            'SZ': 'Eswatini',
+            'LS': 'Lesotho',
+            'MZ': 'Mozambique',
+            'MW': 'Malawi',
+            'MG': 'Madagascar',
+            'MU': 'Mauritius',
+            'SC': 'Seychelles',
+            'KM': 'Comoros',
+            'CV': 'Cape Verde',
+            'ST': 'Sao Tome and Principe',
+            'GW': 'Guinea-Bissau',
+            'GN': 'Guinea',
+            'SL': 'Sierra Leone',
+            'LR': 'Liberia',
+            'TG': 'Togo',
+            'BJ': 'Benin',
+            'GM': 'Gambia',
+            
+            // Oceania
+            'AU': 'Australia',
+            'NZ': 'New Zealand',
+            'PG': 'Papua New Guinea',
+            'FJ': 'Fiji',
+            'SB': 'Solomon Islands',
+            'VU': 'Vanuatu',
+            'NC': 'New Caledonia',
+            'PF': 'French Polynesia',
+            'WS': 'Samoa',
+            'TO': 'Tonga',
+            'KI': 'Kiribati',
+            'PW': 'Palau',
+            'FM': 'Micronesia',
+            'MH': 'Marshall Islands',
+            'NR': 'Nauru',
+            'TV': 'Tuvalu',
+            'CK': 'Cook Islands',
+            'NU': 'Niue',
+            
+            // Special cases and variations
+            'USA': 'United States',
+            'UAE': 'United Arab Emirates',
+            'ROK': 'South Korea',
+            'DPRK': 'North Korea',
+            'RSA': 'South Africa',
+            'NED': 'Netherlands',
+            'GER': 'Germany',
+            'SUI': 'Switzerland',
+            'AUT': 'Austria',
+            'BEL': 'Belgium',
+            'ESP': 'Spain',
+            'POR': 'Portugal',
+            'ITA': 'Italy',
+            'FRA': 'France',
+            'ENG': 'England',
+            'SCO': 'Scotland',
+            'WAL': 'Wales',
+            'NIR': 'Northern Ireland',
+            'IRE': 'Ireland',
+            'DEN': 'Denmark',
+            'SWE': 'Sweden',
+            'NOR': 'Norway',
+            'FIN': 'Finland',
+            'POL': 'Poland',
+            'CZE': 'Czech Republic',
+            'SVK': 'Slovakia',
+            'HUN': 'Hungary',
+            'ROM': 'Romania',
+            'BUL': 'Bulgaria',
+            'GRE': 'Greece',
+            'CRO': 'Croatia',
+            'SRB': 'Serbia',
+            'BIH': 'Bosnia and Herzegovina',
+            'MKD': 'North Macedonia',
+            'ALB': 'Albania',
+            'LTU': 'Lithuania',
+            'LAT': 'Latvia',
+            'EST': 'Estonia',
+            'BLR': 'Belarus',
+            'UKR': 'Ukraine',
+            'RUS': 'Russia',
+            'GEO': 'Georgia',
+            'ARM': 'Armenia',
+            'AZE': 'Azerbaijan',
+            'TUR': 'Turkey',
+            'CYP': 'Cyprus',
+            'ISR': 'Israel',
+            'PAL': 'Palestine',
+            'JPN': 'Japan',
+            'CHN': 'China',
+            'IND': 'India',
+            'PAK': 'Pakistan',
+            'BAN': 'Bangladesh',
+            'SRI': 'Sri Lanka',
+            'THA': 'Thailand',
+            'VIE': 'Vietnam',
+            'MAL': 'Malaysia',
+            'SIN': 'Singapore',
+            'INA': 'Indonesia',
+            'PHI': 'Philippines',
+            'AUS': 'Australia',
+            'NZL': 'New Zealand',
+            'ARG': 'Argentina',
+            'BRA': 'Brazil',
+            'CHI': 'Chile',
+            'COL': 'Colombia',
+            'MEX': 'Mexico',
+            'PER': 'Peru',
+            'URU': 'Uruguay',
+            'VEN': 'Venezuela',
+            'CAN': 'Canada',
+            'CRC': 'Costa Rica',
+            'PAN': 'Panama',
+            'CUB': 'Cuba',
+            'JAM': 'Jamaica',
+            'HAI': 'Haiti',
+            'DOM': 'Dominican Republic',
+            'EGY': 'Egypt',
+            'RSA': 'South Africa',
+            'NIG': 'Nigeria',
+            'KEN': 'Kenya',
+            'ETH': 'Ethiopia',
+            'GHA': 'Ghana',
+            'SEN': 'Senegal',
+            'MAR': 'Morocco',
+            'ALG': 'Algeria',
+            'TUN': 'Tunisia',
+            'Unknown': 'Unknown',
+            'UNKNOWN': 'Unknown',
+            '': 'Unknown'
+        };
+
+        // Function to expand country code to full name
+        function expandCountryName(countryCode) {
+            if (!countryCode) return 'Unknown';
+            const upperCode = countryCode.toUpperCase().trim();
+            return countryCodeMap[upperCode] || countryCode;
+        }
+
+        // Event listeners
+        titleSearch.addEventListener('input', handleTitleSearch);
+        titleSearch.addEventListener('keydown', handleKeyNavigation);
+        titleSearch.addEventListener('blur', hideSuggestions);
+        generateReportBtn.addEventListener('click', generateReport);
+        clearFormBtn.addEventListener('click', clearForm);
+        exportExcelBtn.addEventListener('click', exportToExcel);
+        exportTxtBtn.addEventListener('click', exportToTxt);
+        exportPrintBtn.addEventListener('click', printReport);
+        filterCustomer.addEventListener('input', filterReportResults);
+        filterCountry.addEventListener('change', filterReportResults);
+        filterCity.addEventListener('change', filterReportResults);
+
+        // Utility functions
+        function showError(message) {
+            errorText.textContent = message;
+            errorMessage.style.display = 'block';
+            successMessage.style.display = 'none';
+        }
+
+        function showSuccess(message) {
+            successText.textContent = message;
+            successMessage.style.display = 'block';
+            errorMessage.style.display = 'none';
+        }
+
+        function hideMessages() {
+            errorMessage.style.display = 'none';
+            successMessage.style.display = 'none';
+        }
+
+        // Load available titles on page load
+        async function loadAvailableTitles() {
+            try {
+                const response = await fetch('/api/titles');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const titles = await response.json();
+                availableTitles = titles.map(title => title.title).sort();
+                
+                console.log(`Loaded ${availableTitles.length} available titles`);
+            } catch (error) {
+                showError('Failed to load titles: ' + error.message);
+            }
+        }
+
+        // Handle title search and autocomplete
+        function handleTitleSearch(e) {
+            const query = e.target.value.toLowerCase().trim();
+            
+            if (query.length < 2) {
+                hideSuggestions();
+                return;
+            }
+
+            const filteredTitles = availableTitles.filter(title => 
+                title.toLowerCase().includes(query) && !selectedTitles.includes(title)
+            ).slice(0, 10); // Limit to 10 suggestions
+
+            showSuggestions(filteredTitles);
+        }
+
+        // Show autocomplete suggestions
+        function showSuggestions(titles) {
+            if (titles.length === 0) {
+                hideSuggestions();
+                return;
+            }
+
+            autocompleteDropdown.innerHTML = titles.map((title, index) => 
+                `<div class="autocomplete-item" data-index="${index}" data-title="${title}">${title}</div>`
+            ).join('');
+
+            // Add click listeners to suggestions
+            autocompleteDropdown.querySelectorAll('.autocomplete-item').forEach(item => {
+                item.addEventListener('mousedown', (e) => {
+                    e.preventDefault(); // Prevent blur event
+                    addTitle(item.dataset.title);
+                });
+            });
+
+            autocompleteDropdown.style.display = 'block';
+            currentHighlightIndex = -1;
+        }
+
+        // Hide suggestions
+        function hideSuggestions() {
+            setTimeout(() => {
+                autocompleteDropdown.style.display = 'none';
+            }, 150); // Delay to allow click events
+        }
+
+        // Handle keyboard navigation
+        function handleKeyNavigation(e) {
+            const items = autocompleteDropdown.querySelectorAll('.autocomplete-item');
+            
+            if (items.length === 0) return;
+
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    currentHighlightIndex = Math.min(currentHighlightIndex + 1, items.length - 1);
+                    updateHighlight(items);
+                    break;
+                    
+                case 'ArrowUp':
+                    e.preventDefault();
+                    currentHighlightIndex = Math.max(currentHighlightIndex - 1, -1);
+                    updateHighlight(items);
+                    break;
+                    
+                case 'Enter':
+                    e.preventDefault();
+                    if (currentHighlightIndex >= 0) {
+                        addTitle(items[currentHighlightIndex].dataset.title);
+                    }
+                    break;
+                    
+                case 'Escape':
+                    hideSuggestions();
+                    titleSearch.blur();
+                    break;
+            }
+        }
+
+        // Update visual highlight
+        function updateHighlight(items) {
+            items.forEach((item, index) => {
+                item.classList.toggle('highlighted', index === currentHighlightIndex);
+            });
+        }
+
+        // Add title to selected list
+        function addTitle(title) {
+            if (!selectedTitles.includes(title)) {
+                selectedTitles.push(title);
+                renderSelectedTitles();
+            }
+            
+            titleSearch.value = '';
+            hideSuggestions();
+            titleSearch.focus();
+        }
+
+        // Remove title from selected list
+        function removeTitle(title) {
+            selectedTitles = selectedTitles.filter(t => t !== title);
+            renderSelectedTitles();
+        }
+
+        // Render selected titles
+        function renderSelectedTitles() {
+            if (selectedTitles.length === 0) {
+                selectedTitlesList.innerHTML = '<div class="no-titles-selected">No titles selected. Start typing above to add titles.</div>';
+                return;
+            }
+
+            selectedTitlesList.innerHTML = selectedTitles.map(title => `
+                <div class="selected-title-tag">
+                    <span>${title}</span>
+                    <button type="button" class="remove-title" onclick="removeTitle('${title.replace(/'/g, "\\'")}')">×</button>
+                </div>
+            `).join('');
+        }
+
+        // Make removeTitle globally available
+        window.removeTitle = removeTitle;
+
+        // Clear form
+        function clearForm() {
+            publisherName.value = '';
+            startDate.value = '';
+            endDate.value = '';
+            titleSearch.value = '';
+            selectedTitles = [];
+            reportResults.style.display = 'none';
+            hideMessages();
+            hideSuggestions();
+            renderSelectedTitles();
+        }
+
+        // Generate report
+        async function generateReport() {
+            hideMessages();
+            
+            // Validation
+            if (!publisherName.value.trim()) {
+                showError('Please enter a publisher name');
+                return;
+            }
+            
+            if (!startDate.value || !endDate.value) {
+                showError('Please select both start and end dates');
+                return;
+            }
+            
+            if (selectedTitles.length === 0) {
+                showError('Please select at least one title');
+                return;
+            }
+            
+            if (new Date(startDate.value) > new Date(endDate.value)) {
+                showError('Start date must be before end date');
+                return;
+            }
+
+            try {
+                generateReportBtn.disabled = true;
+                generateReportBtn.textContent = 'Generating...';
+                
+                reportResults.style.display = 'block';
+                reportContent.innerHTML = '<div class="loading">Generating report...</div>';
+                
+                const response = await fetch('/api/generate-report', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        publisher: publisherName.value.trim(),
+                        startDate: startDate.value,
+                        endDate: endDate.value,
+                        titles: selectedTitles
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                reportData = result.data;
+                
+                displayReport(result);
+                showSuccess('Report generated successfully');
+                
+            } catch (error) {
+                showError('Failed to generate report: ' + error.message);
+                reportResults.style.display = 'none';
+            } finally {
+                generateReportBtn.disabled = false;
+                generateReportBtn.textContent = 'Generate Report';
+            }
+        }
+
+        // Display report
+        function displayReport(result) {
+            reportTitle.textContent = `Customer Report - ${publisherName.value}`;
+            reportSummary.textContent = `${result.totalCustomers} customers found for ${selectedTitles.length} titles (${startDate.value} to ${endDate.value})`;
+            
+            // Update filter dropdowns
+            updateFilterOptions(result.data);
+            
+            // Render report content
+            renderReportContent(result.data);
+        }
+
+        // Update filter options
+        function updateFilterOptions(data) {
+            // Expand country names for display
+            const expandedData = data.map(item => ({
+                ...item,
+                country: expandCountryName(item.country)
+            }));
+            
+            const countries = [...new Set(expandedData.map(item => item.country))].sort();
+            const cities = [...new Set(expandedData.map(item => item.city))].sort();
+            
+            filterCountry.innerHTML = '<option value="">All Countries</option>' + 
+                countries.map(country => `<option value="${country}">${country}</option>`).join('');
+            
+            filterCity.innerHTML = '<option value="">All Cities</option>' + 
+                cities.map(city => `<option value="${city}">${city}</option>`).join('');
+        }
+
+        // Render report content
+        function renderReportContent(data) {
+            if (data.length === 0) {
+                reportContent.innerHTML = '<div class="no-results">No customers found for the selected criteria</div>';
+                return;
+            }
+
+            // Expand country names in the data for display
+            const displayData = data.map(item => ({
+                ...item,
+                country: expandCountryName(item.country)
+            }));
+
+            // Group by country, then city, then sort customers alphabetically
+            const grouped = displayData.reduce((acc, item) => {
+                if (!acc[item.country]) acc[item.country] = {};
+                if (!acc[item.country][item.city]) acc[item.country][item.city] = [];
+                acc[item.country][item.city].push(item);
+                return acc;
+            }, {});
+
+            // Sort countries by customer count (descending)
+            const sortedCountries = Object.keys(grouped).sort((a, b) => {
+                const aCount = Object.values(grouped[a]).flat().length;
+                const bCount = Object.values(grouped[b]).flat().length;
+                return bCount - aCount;
+            });
+
+            let html = '';
+            sortedCountries.forEach(country => {
+                const cities = Object.keys(grouped[country]).sort();
+                const countryCustomerCount = Object.values(grouped[country]).flat().length;
+                
+                html += `
+                    <div class="country-section">
+                        <div class="country-header">${country} (${countryCustomerCount} customers)</div>
+                `;
+                
+                cities.forEach(city => {
+                    const customers = grouped[country][city].sort((a, b) => 
+                        a.customer_name.localeCompare(b.customer_name)
+                    );
+                    
+                    html += `
+                        <div class="city-section">
+                            <div class="city-header">${city} (${customers.length} customers)</div>
+                            <div class="customer-list">
+                    `;
+                    
+                    customers.forEach(customer => {
+                        html += `
+                            <div class="customer-item">
+                                <div>
+                                    <div class="customer-name">${customer.customer_name}</div>
+                                    <div class="customer-details">
+                                        Orders: ${customer.total_orders} | 
+                                        Quantity: ${customer.total_quantity}
+                                    </div>
+                                </div>
+                                <div class="customer-details">
+                                    Last Order: ${customer.last_order ? new Date(customer.last_order).toLocaleDateString() : 'N/A'}
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    html += `
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+            });
+
+            reportContent.innerHTML = html;
+        }
+
+        // Filter report results
+        function filterReportResults() {
+            const customerFilter = filterCustomer.value.toLowerCase();
+            const countryFilter = filterCountry.value;
+            const cityFilter = filterCity.value;
+            
+            // Expand country names in report data for filtering
+            const expandedData = reportData.map(item => ({
+                ...item,
+                country: expandCountryName(item.country)
+            }));
+            
+            let filteredData = expandedData.filter(item => {
+                const matchesCustomer = !customerFilter || item.customer_name.toLowerCase().includes(customerFilter);
+                const matchesCountry = !countryFilter || item.country === countryFilter;
+                const matchesCity = !cityFilter || item.city === cityFilter;
+                
+                return matchesCustomer && matchesCountry && matchesCity;
+            });
+            
+            renderReportContent(filteredData);
+        }
+
+        // Export to CSV - Enhanced version with proper country grouping
+        function exportToCsv() {
+            if (reportData.length === 0) {
+                showError('No data to export');
+                return;
+            }
+            
+            // Create a copy of the data with expanded country names
+            const exportData = reportData.map(row => ({
+                ...row,
+                country: expandCountryName(row.country)
+            }));
+            
+            // Group data by country for proper sorting
+            const groupedByCountry = exportData.reduce((acc, item) => {
+                if (!acc[item.country]) {
+                    acc[item.country] = [];
+                }
+                acc[item.country].push(item);
+                return acc;
+            }, {});
+            
+            // Sort countries by customer count (descending)
+            const sortedCountries = Object.keys(groupedByCountry).sort((a, b) => {
+                return groupedByCountry[b].length - groupedByCountry[a].length;
+            });
+            
+            // Build final sorted data array
+            const sortedData = [];
+            sortedCountries.forEach(country => {
+                // Sort customers within this country by city, then by name
+                const countryCustomers = groupedByCountry[country].sort((a, b) => {
+                    // First by city
+                    const cityCompare = (a.city || '').localeCompare(b.city || '');
+                    if (cityCompare !== 0) return cityCompare;
+                    // Then by customer name
+                    return a.customer_name.localeCompare(b.customer_name);
+                });
+                
+                // Add all customers from this country to the sorted data
+                sortedData.push(...countryCustomers);
+            });
+            
+            // Create CSV content with limited columns
+            const headers = ['Publisher', 'Retailer Name', 'City', 'Country'];
+            const csvContent = [
+                headers.join(','),
+                ...sortedData.map(row => [
+                    `"${publisherName.value}"`,
+                    `"${row.customer_name.replace(/"/g, '""')}"`,  // Escape quotes in customer names
+                    `"${row.city || ''}"`,
+                    `"${row.country}"`
+                ].join(','))
+            ].join('\n');
+            
+            // Create blob and download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            
+            // Format filename with publisher name only
+            a.download = `${publisherName.value}_Stockists.csv`;
+            
+            a.click();
+            window.URL.revokeObjectURL(url);
+            
+            showSuccess('CSV exported successfully');
+        }
+
+        // Export to Excel format (CSV format that Excel prefers)
+        function exportToExcel() {
+            if (reportData.length === 0) {
+                showError('No data to export');
+                return;
+            }
+            
+            // Create a copy of the data with expanded country names
+            const exportData = reportData.map(row => ({
+                ...row,
+                country: expandCountryName(row.country)
+            }));
+            
+            // Group data by country for proper sorting
+            const groupedByCountry = exportData.reduce((acc, item) => {
+                if (!acc[item.country]) {
+                    acc[item.country] = [];
+                }
+                acc[item.country].push(item);
+                return acc;
+            }, {});
+            
+            // Sort countries by customer count (descending)
+            const sortedCountries = Object.keys(groupedByCountry).sort((a, b) => {
+                return groupedByCountry[b].length - groupedByCountry[a].length;
+            });
+            
+            // Build final sorted data array
+            const sortedData = [];
+            sortedCountries.forEach(country => {
+                // Sort customers within this country by city, then by name
+                const countryCustomers = groupedByCountry[country].sort((a, b) => {
+                    // First by city
+                    const cityCompare = (a.city || '').localeCompare(b.city || '');
+                    if (cityCompare !== 0) return cityCompare;
+                    // Then by customer name
+                    return a.customer_name.localeCompare(b.customer_name);
+                });
+                
+                // Add all customers from this country to the sorted data
+                sortedData.push(...countryCustomers);
+            });
+            
+            // Create CSV content with Excel-friendly formatting
+            // Using semicolon separator which Excel handles better in some regions
+            const headers = ['Publisher', 'Retailer Name', 'City', 'Country'];
+            
+            // Build CSV with proper Excel formatting
+            let csvContent = headers.join(',') + '\n';
+            
+            sortedData.forEach(row => {
+                const rowData = [
+                    `"${publisherName.value}"`,
+                    `"${row.customer_name.replace(/"/g, '""')}"`,
+                    `"${row.city || ''}"`,
+                    `"${row.country}"`
+                ];
+                csvContent += rowData.join(',') + '\n';
+            });
+            
+            // Create blob with UTF-8 BOM for Excel compatibility
+            // The BOM helps Excel recognize UTF-8 encoding properly
+            const BOM = '\uFEFF';
+            const blob = new Blob([BOM + csvContent], { 
+                type: 'text/csv;charset=utf-8;' 
+            });
+            
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            
+            // Use .csv extension to avoid Excel warning
+            // Excel opens CSV files without warnings
+            a.download = `${publisherName.value}_Stockists_Excel.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            
+            showSuccess('Excel-compatible file exported successfully');
+        }
+        
+        // Export to TXT format
+        function exportToTxt() {
+            if (reportData.length === 0) {
+                showError('No data to export');
+                return;
+            }
+            
+            // Create a copy of the data with expanded country names
+            const exportData = reportData.map(row => ({
+                ...row,
+                country: expandCountryName(row.country)
+            }));
+            
+            // Group data by country for proper sorting
+            const groupedByCountry = exportData.reduce((acc, item) => {
+                if (!acc[item.country]) {
+                    acc[item.country] = [];
+                }
+                acc[item.country].push(item);
+                return acc;
+            }, {});
+            
+            // Sort countries by customer count (descending)
+            const sortedCountries = Object.keys(groupedByCountry).sort((a, b) => {
+                return groupedByCountry[b].length - groupedByCountry[a].length;
+            });
+            
+            // Build formatted text content
+            let txtContent = `STOCKIST REPORT\n`;
+            txtContent += `================\n\n`;
+            txtContent += `Publisher: ${publisherName.value}\n`;
+            txtContent += `Report Generated: ${new Date().toLocaleDateString('en-GB')}\n`;
+            txtContent += `Date Range: ${startDate.value} to ${endDate.value}\n`;
+            txtContent += `Total Customers: ${exportData.length}\n\n\n\n`;
+            
+            // Add data organized by country
+            sortedCountries.forEach((country, countryIndex) => {
+                const countryCustomers = groupedByCountry[country].sort((a, b) => {
+                    // First by city
+                    const cityCompare = (a.city || '').localeCompare(b.city || '');
+                    if (cityCompare !== 0) return cityCompare;
+                    // Then by customer name
+                    return a.customer_name.localeCompare(b.customer_name);
+                });
+                
+                // Add country header
+                txtContent += `${country} \n`;
+                txtContent += `-------------------------------------\n\n`;
+                
+                // Group by city within country
+                const citiesInCountry = [...new Set(countryCustomers.map(c => c.city || 'Unknown'))].sort();
+                
+                citiesInCountry.forEach((city, cityIndex) => {
+                    const cityCustomers = countryCustomers.filter(c => (c.city || 'Unknown') === city);
+                    
+                    // Add city name
+                    txtContent += `${city}\n`;
+                    
+                    // Add customers for this city
+                    cityCustomers.forEach(customer => {
+                        txtContent += `- ${customer.customer_name}\n`;
+                    });
+                    
+                    // Add spacing between cities (but not after the last city)
+                    if (cityIndex < citiesInCountry.length - 1) {
+                        txtContent += `\n`;
+                    }
+                });
+                
+                // Add spacing between countries (two blank lines)
+                if (countryIndex < sortedCountries.length - 1) {
+                    txtContent += `\n\n\n`;
+                }
+            });
+            
+            // Create blob and download
+            const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${publisherName.value}_Stockists.txt`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            
+            showSuccess('TXT file exported successfully');
+        }
+
+        // Print report
+        function printReport() {
+            window.print();
+        }
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAvailableTitles();
+            
+            // Set default date range (last 30 days)
+            const today = new Date();
+            const thirtyDaysAgo = new Date(today);
+            thirtyDaysAgo.setDate(today.getDate() - 30);
+            
+            endDate.value = today.toISOString().split('T')[0];
+            startDate.value = thirtyDaysAgo.toISOString().split('T')[0];
+        });
+    </script>
+</body>
+</html>
