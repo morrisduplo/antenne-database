@@ -841,7 +841,7 @@
             }
         }
 
-        // Display records
+        // Display records - UPDATED WITHOUT AUTHOR AND QUANTITY COLUMNS
         function displayRecords() {
             if (booksonixRecords.length === 0) {
                 recordsContainer.innerHTML = '<div class="no-records">No Booksonix records found. Upload Excel files to get started!</div>';
@@ -851,7 +851,7 @@
 
             recordCount.textContent = `${booksonixRecords.length} record${booksonixRecords.length !== 1 ? 's' : ''} found`;
 
-            // Create table
+            // Create table - REMOVED AUTHOR AND QUANTITY COLUMNS
             const table = document.createElement('table');
             table.innerHTML = `
                 <thead>
@@ -859,10 +859,8 @@
                         <th>SKU</th>
                         <th>ISBN</th>
                         <th>TITLE</th>
-                        <th>AUTHOR</th>
                         <th>PUBLISHER</th>
                         <th>PRICE</th>
-                        <th>QUANTITY</th>
                         <th>UPLOAD DATE</th>
                     </tr>
                 </thead>
@@ -872,10 +870,8 @@
                             <td>${record.sku || '-'}</td>
                             <td>${record.isbn || '-'}</td>
                             <td>${record.title || '-'}</td>
-                            <td>${record.author || '-'}</td>
                             <td>${record.publisher || '-'}</td>
                             <td>${record.price ? '£' + parseFloat(record.price).toFixed(2) : '-'}</td>
-                            <td>${record.quantity || 0}</td>
                             <td>${record.upload_date ? new Date(record.upload_date).toLocaleDateString() : '-'}</td>
                         </tr>
                     `).join('')}
