@@ -404,6 +404,17 @@
             border: 1px solid #ddd;
         }
 
+        .stat-card.clickable {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card.clickable:hover {
+            background: #e9ecef;
+            transform: translateY(-2px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
         .stat-number {
             font-size: 24px;
             font-weight: bold;
@@ -603,7 +614,7 @@
             <div id="status" class="status"></div>
         </div>
 
-        <!-- Statistics Section - UPDATED TO INCLUDE UNIQUE ISBNs -->
+        <!-- Statistics Section -->
         <div class="stats-section">
             <div class="stat-card">
                 <div class="stat-number" id="totalRecords">0</div>
@@ -613,7 +624,7 @@
                 <div class="stat-number" id="uniqueSKUs">0</div>
                 <div class="stat-label">Unique SKUs</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card clickable" id="isbnStatCard">
                 <div class="stat-number" id="uniqueISBNs">0</div>
                 <div class="stat-label">Unique ISBNs</div>
             </div>
@@ -725,7 +736,7 @@
         const refreshBtn = document.getElementById('refreshBtn');
         const recordCount = document.getElementById('recordCount');
         
-        // Stats elements - UPDATED TO INCLUDE UNIQUE ISBNs
+        // Stats elements
         const totalRecordsEl = document.getElementById('totalRecords');
         const uniqueSKUsEl = document.getElementById('uniqueSKUs');
         const uniqueISBNsEl = document.getElementById('uniqueISBNs');
@@ -770,7 +781,10 @@
         });
 
         // Refresh button handler
-        refreshBtn.addEventListener('click', loadRecords);
+        refreshBtn.addEventListener('click', () => {
+            loadRecords(currentPage);
+            loadStats();
+        });
 
         // Handle file selection
         function handleFileSelection(files) {
@@ -1145,35 +1159,119 @@
             });
         }
 
-        // Load statistics - UPDATED TO INCLUDE UNIQUE ISBNs
+        // UPDATED Load statistics function with better ISBN counting
         async function loadStats() {
             try {
                 const response = await fetch('/api/booksonix/stats');
                 const stats = await response.json();
                 
-                totalRecordsEl.textContent = stats.totalRecords || 0;
-                uniqueSKUsEl.textContent = stats.uniqueSKUs || 0;
-                uniqueISBNsEl.textContent = stats.uniqueISBNs || 0;
+                // Update the display elements
+                totalRecordsEl.textContent = (stats.totalRecords || 0).toLocaleString();
+                uniqueSKUsEl.textContent = (stats.uniqueSKUs || 0).toLocaleString();
+                uniqueISBNsEl.textContent = (stats.uniqueISBNs || 0).toLocaleString();
                 
-                // If the backend doesn't return uniqueISBNs yet, calculate it from records
-                if (!stats.uniqueISBNs && booksonixRecords.length > 0) {
-                    const uniqueISBNSet = new Set(booksonixRecords
-                        .filter(r => r.isbn)
-                        .map(r => r.isbn));
-                    uniqueISBNsEl.textContent = uniqueISBNSet.size;
+                // If stats are still showing 0 for ISBNs but we have records, 
+                // fetch a separate ISBN count (fallback)
+                if (stats.uniqueISBNs === 0 && stats.totalRecords > 0) {
+                    console.log('Unique ISBNs showing 0, attempting to fetch ISBN analysis...');
+                    try {
+                        // Try to get ISBN count through a different endpoint
+                        const isbnResponse = await fetch('/api/booksonix/isbn-count');
+                        if (isbnResponse.ok) {
+                            const isbnData = await isbnResponse.json();
+                            uniqueISBNsEl.textContent = (isbnData.count || 0).toLocaleString();
+                        }
+                    } catch (isbnError) {
+                        console.error('Failed to fetch ISBN count:', isbnError);
+                        // Try debug count as last resort
+                        await debugISBNCount();
+                    }
                 }
+                
+                // Log the stats for debugging
+                console.log('Booksonix Stats:', {
+                    totalRecords: stats.totalRecords,
+                    uniqueSKUs: stats.uniqueSKUs,
+                    uniqueISBNs: stats.uniqueISBNs
+                });
                 
             } catch (error) {
                 console.error('Error loading stats:', error);
+                // Set all stats to 0 if there's an error
+                totalRecordsEl.textContent = '0';
+                uniqueSKUsEl.textContent = '0';
+                uniqueISBNsEl.textContent = '0';
             }
         }
 
-        // Load data when page loads
+        // Debug function to manually check ISBN count from loaded records
+        async function debugISBNCount() {
+            try {
+                // Fetch ALL records without pagination to get accurate count
+                const response = await fetch('/api/booksonix/records?limit=999999');
+                const data = await response.json();
+                const allRecords = data.records || [];
+                
+                // Calculate unique ISBNs from all records
+                const isbnSet = new Set();
+                let recordsWithISBN = 0;
+                let emptyISBNs = 0;
+                
+                allRecords.forEach(record => {
+                    if (record.isbn && record.isbn.trim() !== '') {
+                        isbnSet.add(record.isbn.trim());
+                        recordsWithISBN++;
+                    } else {
+                        emptyISBNs++;
+                    }
+                });
+                
+                console.log('ISBN Analysis:', {
+                    totalRecords: allRecords.length,
+                    uniqueISBNs: isbnSet.size,
+                    recordsWithISBN: recordsWithISBN,
+                    recordsWithoutISBN: emptyISBNs,
+                    sampleISBNs: Array.from(isbnSet).slice(0, 10) // Show first 10 ISBNs as sample
+                });
+                
+                // Update the display if the backend isn't returning the correct count
+                if (isbnSet.size > 0) {
+                    uniqueISBNsEl.textContent = isbnSet.size.toLocaleString();
+                }
+                
+                return isbnSet.size;
+            } catch (error) {
+                console.error('Error in debugISBNCount:', error);
+                return 0;
+            }
+        }
+
+        // Make ISBN stat card clickable for manual refresh
         document.addEventListener('DOMContentLoaded', () => {
+            // Initialize pagination controls
             initializePaginationControls();
+            
+            // Add click event to the ISBN stat card for debugging
+            const isbnStatCard = document.getElementById('isbnStatCard');
+            if (isbnStatCard) {
+                isbnStatCard.title = 'Click to refresh ISBN count';
+                
+                isbnStatCard.addEventListener('click', async () => {
+                    uniqueISBNsEl.textContent = '...';
+                    await loadStats();
+                    // Also run debug count
+                    const debugCount = await debugISBNCount();
+                    console.log('Debug ISBN count:', debugCount);
+                });
+            }
+            
+            // Load initial data
             loadRecords(1);
             loadStats();
         });
+
+        // Make debugISBNCount available in console for debugging
+        window.debugISBNCount = debugISBNCount;
     </script>
 </body>
 </html>
