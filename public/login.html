@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Antenne Books Stockist Database</title>
+    <!-- Import Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier', monospace;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f4f4f4;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'EB Garamond', serif;
+            font-weight: 400;
+        }
+
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #f1f3f4;
+        }
+
+        .logo h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 5px;
+        }
+
+        .logo p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier', monospace;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #666;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            display: none;
+            border: 1px solid #f5c6cb;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            display: none;
+            border: 1px solid #c3e6cb;
+        }
+
+        .success-message.show {
+            display: block;
+        }
+
+        .btn-login {
+            width: 100%;
+            background: #000000;
+            color: white;
+            padding: 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-family: 'Courier', monospace;
+        }
+
+        .btn-login:hover {
+            background: #333333;
+        }
+
+        .btn-login:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .footer-text {
+            text-align: center;
+            margin-top: 30px;
+            color: #666;
+            font-size: 12px;
+            padding-top: 20px;
+            border-top: 1px solid #f1f3f4;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .remember-me {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .remember-me input {
+            margin-right: 8px;
+            width: auto;
+        }
+
+        .remember-me label {
+            font-size: 14px;
+            color: #666;
+            cursor: pointer;
+            margin: 0;
+        }
+
+        .info-text {
+            background: #e7f3ff;
+            border: 1px solid #bee5eb;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 20px;
+            font-size: 12px;
+            color: #004085;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">
+            <h1>Antenne Books Stockist Database</h1>
+            <p>Access your sales and stockist management system</p>
+        </div>
+
+        <div class="info-text">
+            Please enter your credentials to access the system
+        </div>
+
+        <div id="errorMessage" class="error-message">
+            Invalid username or password
+        </div>
+
+        <div id="successMessage" class="success-message">
+            Login successful! Redirecting...
+        </div>
+
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input 
+                    type="text" 
+                    id="username" 
+                    name="username" 
+                    required 
+                    placeholder="Enter your username"
+                    autocomplete="username"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    required 
+                    placeholder="Enter your password"
+                    autocomplete="current-password"
+                >
+            </div>
+
+            <div class="remember-me">
+                <input type="checkbox" id="remember" name="remember">
+                <label for="remember">Remember me for 30 days</label>
+            </div>
+
+            <button type="submit" class="btn-login" id="loginBtn">
+                Login
+            </button>
+        </form>
+
+        <div class="footer-text">
+            © 2025 Antenne Books. All rights reserved.
+        </div>
+    </div>
+
+    <script>
+        // Check if already logged in
+        window.addEventListener('DOMContentLoaded', function() {
+            const session = localStorage.getItem('userSession');
+            if (session) {
+                try {
+                    const sessionData = JSON.parse(session);
+                    // Check if session is still valid (30 days for remember me, 24 hours otherwise)
+                    const maxAge = sessionData.remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+                    if (new Date() - new Date(sessionData.timestamp) < maxAge) {
+                        // Valid session, redirect to home
+                        window.location.href = '/';
+                        return;
+                    } else {
+                        // Session expired
+                        localStorage.removeItem('userSession');
+                    }
+                } catch (e) {
+                    localStorage.removeItem('userSession');
+                }
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const remember = document.getElementById('remember').checked;
+            const loginBtn = document.getElementById('loginBtn');
+            const errorMessage = document.getElementById('errorMessage');
+            const successMessage = document.getElementById('successMessage');
+            
+            // Hide messages
+            errorMessage.classList.remove('show');
+            successMessage.classList.remove('show');
+            
+            // Disable button and show loading
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = '<span class="loading"></span>';
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Store session in localStorage
+                    const sessionData = {
+                        id: data.user.id,
+                        username: data.user.username,
+                        email: data.user.email,
+                        role: data.user.role,
+                        timestamp: new Date().toISOString(),
+                        remember: remember
+                    };
+                    
+                    localStorage.setItem('userSession', JSON.stringify(sessionData));
+                    
+                    // Show success message
+                    successMessage.classList.add('show');
+                    
+                    // Redirect to home page after a short delay
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1000);
+                } else {
+                    const error = await response.json();
+                    errorMessage.textContent = error.error || 'Invalid username or password';
+                    errorMessage.classList.add('show');
+                    loginBtn.disabled = false;
+                    loginBtn.textContent = 'Login';
+                }
+            } catch (error) {
+                errorMessage.textContent = 'Network error. Please try again.';
+                errorMessage.classList.add('show');
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Login';
+                console.error('Login error:', error);
+            }
+        });
+    </script>
+</body>
+</html>
