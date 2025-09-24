@@ -1714,3 +1714,38 @@ process.on('SIGINT', () => {
         process.exit(0);
     });
 });
+// SIMPLE TEST UPLOAD - Add this temporarily
+app.post('/api/gazelle/test-upload', upload.single('gazelleFile'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        // Just try to read the file and insert one test record
+        const testInsert = await pool.query(
+            `INSERT INTO gazelle_sales 
+            (order_ref, customer_name, city, country, title, quantity, unit_price) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id`,
+            ['TEST-' + Date.now(), 'Test Customer', 'London', 'UK', 'Test Book', 1, 10.99]
+        );
+        
+        fs.unlinkSync(req.file.path);
+        
+        res.json({ 
+            success: true, 
+            message: 'Test insert successful',
+            insertedId: testInsert.rows[0].id
+        });
+        
+    } catch (error) {
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ 
+            error: error.message,
+            detail: error.detail,
+            code: error.code
+        });
+    }
+});
