@@ -374,9 +374,9 @@ app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, re
                        row['Product SKU'] || row['Product Code'] || 
                        row['Item Code'] || row['Code'] || '';
             
-            // SKU stays as-is (only trimmed)
+            // Clean SKU - remove hyphens
             if (sku) {
-                sku = String(sku).trim();
+                sku = String(sku).replace(/-/g, '').trim();
             }
             
             if (!sku) {
@@ -506,10 +506,79 @@ app.get('/api/booksonix/stats', async (req, res) => {
 });
 
 // =============================================
-// GAZELLE SALES ROUTES - FIXED VERSION
+// GAZELLE SALES ROUTES - FIXED VERSION WITH BETTER DATE HANDLING
 // =============================================
 
-// Upload Gazelle Sales file
+// Helper function to parse Excel dates
+function parseExcelDate(value) {
+    if (!value) return null;
+    
+    // If it's already a Date object
+    if (value instanceof Date) {
+        return value;
+    }
+    
+    // If it's a number (Excel serial date)
+    if (typeof value === 'number') {
+        // Excel dates start from 1900-01-01 (with leap year bug for 1900)
+        // JavaScript dates start from 1970-01-01
+        // The difference is 25569 days
+        const excelDate = new Date((value - 25569) * 86400 * 1000);
+        if (!isNaN(excelDate.getTime())) {
+            return excelDate;
+        }
+    }
+    
+    // If it's a string
+    if (typeof value === 'string') {
+        const trimmedValue = value.trim();
+        
+        // Try parsing as ISO date
+        let date = new Date(trimmedValue);
+        if (!isNaN(date.getTime())) {
+            return date;
+        }
+        
+        // Try DD/MM/YYYY format (UK format)
+        if (trimmedValue.includes('/')) {
+            const parts = trimmedValue.split('/');
+            if (parts.length === 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10);
+                const year = parseInt(parts[2], 10);
+                
+                if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                    // Create date using Date constructor (month is 0-indexed)
+                    date = new Date(year, month - 1, day);
+                    if (!isNaN(date.getTime())) {
+                        return date;
+                    }
+                }
+            }
+        }
+        
+        // Try DD-MM-YYYY format
+        if (trimmedValue.includes('-')) {
+            const parts = trimmedValue.split('-');
+            if (parts.length === 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10);
+                const year = parseInt(parts[2], 10);
+                
+                if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                    date = new Date(year, month - 1, day);
+                    if (!isNaN(date.getTime())) {
+                        return date;
+                    }
+                }
+            }
+        }
+    }
+    
+    return null;
+}
+
+// Upload Gazelle Sales file - FIXED VERSION
 app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
@@ -518,15 +587,26 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
     console.log('Processing Gazelle Sales file:', req.file.originalname);
 
     try {
-        const workbook = xlsx.readFile(req.file.path);
+        // Read the Excel file with date handling
+        const workbook = xlsx.readFile(req.file.path, {
+            cellDates: true,  // Parse dates
+            dateNF: 'dd/mm/yyyy' // Date format
+        });
+        
         const sheetName = workbook.SheetNames[0];
-        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { raw: false });
+        
+        // Convert to JSON with raw values preserved
+        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { 
+            raw: false,  // Don't use raw values, parse them
+            dateNF: 'dd/mm/yyyy'
+        });
 
         console.log('Total rows in Excel file:', data.length);
         
         // Log the first row to see column names
         if (data.length > 0) {
             console.log('Column headers found:', Object.keys(data[0]));
+            console.log('First row data:', data[0]);
         }
 
         let newRecords = 0;
@@ -537,80 +617,69 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
         for (let i = 0; i < data.length; i++) {
             const row = data[i];
             
-            // Debug: Log all column names from the first row
-            if (i === 0) {
-                console.log('Available columns in Excel file:', Object.keys(row));
+            // Map the exact column names from your Excel file
+            const orderRef = row['Order Ref'] || row['order ref'] || '';
+            const customerName = row['Customer Name'] || row['customer name'] || '';
+            const city = row['City'] || row['city'] || '';
+            const country = row['Country'] || row['country'] || '';
+            const title = row['Title'] || row['title'] || '';
+            const isbn13 = row['ISBN-13'] || row['ISBN13'] || row['isbn-13'] || '';
+            
+            // Parse quantity
+            let quantity = 0;
+            const quantityValue = row['Quantity'] || row['quantity'];
+            if (quantityValue !== undefined && quantityValue !== null) {
+                quantity = parseInt(String(quantityValue).replace(/[^\d-]/g, '')) || 0;
             }
             
-            // Direct column mapping based on your Excel file
-            const orderRef = row['Order Ref'] || '';
-            const orderDate = row['Order Date'] || null;
-            const customerName = row['Customer Name'] || '';
-            const city = row['City'] || '';
-            const country = row['Country'] || '';
-            const title = row['Title'] || '';
-            const isbn13 = row['ISBN-13'] || '';
-            const quantity = parseInt(row['Quantity']) || 0;
-            const unitPrice = parseFloat(row['Unit Price']) || 0;
+            // Parse unit price
+            let unitPrice = 0;
+            const priceValue = row['Unit Price'] || row['unit price'];
+            if (priceValue !== undefined && priceValue !== null) {
+                const cleanPrice = String(priceValue)
+                    .replace(/£/g, '')
+                    .replace(/,/g, '')
+                    .trim();
+                unitPrice = parseFloat(cleanPrice) || 0;
+            }
             
-            // Handle discount - it might be "Discount %" in your file
+            // Parse discount
             let discount = 0;
-            if (row['Discount %']) {
-                discount = parseFloat(row['Discount %']) || 0;
-            } else if (row['Discount']) {
-                discount = parseFloat(row['Discount']) || 0;
+            const discountValue = row['Discount %'] || row['Discount'] || row['discount'];
+            if (discountValue !== undefined && discountValue !== null) {
+                discount = parseFloat(String(discountValue).replace(/%/g, '')) || 0;
             }
             
-            const publisher = row['Publishers'] || row['Publisher'] || '';
-            const format = row['Format'] || '';
-
-            // Debug log for first row to see what we're extracting
-            if (i === 0) {
-                console.log('Extracted values from first row:', {
-                    orderRef, orderDate, customerName, city, country, title, isbn13, quantity, unitPrice, discount, publisher, format
+            const publisher = row['Publishers'] || row['Publisher'] || row['publisher'] || '';
+            const format = row['Format'] || row['format'] || '';
+            
+            // Parse order date with the helper function
+            const orderDateValue = row['Order Date'] || row['order date'];
+            const parsedDate = parseExcelDate(orderDateValue);
+            
+            // Debug log for first few rows
+            if (i < 3) {
+                console.log(`Row ${i + 1} data:`, {
+                    orderRef,
+                    orderDateRaw: orderDateValue,
+                    orderDateParsed: parsedDate,
+                    customerName,
+                    city,
+                    country,
+                    quantity,
+                    unitPrice,
+                    discount
                 });
             }
 
             // Skip rows without essential data
-            if (!orderRef && !customerName) {
-                console.log(`Row ${i + 1}: Skipped - no essential data found`);
+            if (!orderRef || !customerName) {
+                console.log(`Row ${i + 1}: Skipped - missing order ref or customer name`);
                 skippedRows++;
                 continue;
             }
 
             try {
-                // Parse date if it's a string
-                let parsedDate = null;
-                if (orderDate) {
-                    if (typeof orderDate === 'string') {
-                        // Try different date formats
-                        parsedDate = new Date(orderDate);
-                        
-                        // If invalid, try UK format (DD/MM/YYYY)
-                        if (isNaN(parsedDate.getTime()) && orderDate.includes('/')) {
-                            const parts = orderDate.split('/');
-                            if (parts.length === 3) {
-                                // Try DD/MM/YYYY format
-                                parsedDate = new Date(`${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`);
-                                
-                                // If still invalid, try MM/DD/YYYY format
-                                if (isNaN(parsedDate.getTime())) {
-                                    parsedDate = new Date(`${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`);
-                                }
-                            }
-                        }
-                    } else if (orderDate instanceof Date) {
-                        parsedDate = orderDate;
-                    } else if (typeof orderDate === 'number') {
-                        // Excel serial date number
-                        parsedDate = new Date((orderDate - 25569) * 86400 * 1000);
-                    }
-                    
-                    if (parsedDate && isNaN(parsedDate.getTime())) {
-                        parsedDate = null;
-                    }
-                }
-
                 const result = await pool.query(
                     `INSERT INTO gazelle_sales 
                     (order_ref, order_date, customer_name, city, country, title, isbn13, 
@@ -629,16 +698,26 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                         format = EXCLUDED.format,
                         upload_date = CURRENT_TIMESTAMP
                     RETURNING id, (xmax = 0) AS inserted`,
-                    [orderRef, parsedDate, customerName, city, country, title, isbn13, 
-                     quantity, unitPrice, discount, publisher, format]
+                    [
+                        orderRef, 
+                        parsedDate,  // Use the parsed date
+                        customerName, 
+                        city, 
+                        country, 
+                        title, 
+                        isbn13, 
+                        quantity, 
+                        unitPrice, 
+                        discount, 
+                        publisher, 
+                        format
+                    ]
                 );
 
                 if (result.rows[0].inserted) {
                     newRecords++;
-                    console.log(`Row ${i + 1}: New record added`);
                 } else {
                     duplicates++;
-                    console.log(`Row ${i + 1}: Updated existing record`);
                 }
             } catch (err) {
                 console.error(`Error inserting row ${i + 1}:`, err.message);
