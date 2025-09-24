@@ -60,19 +60,19 @@ async function initializeDatabase() {
             console.log('Default admin user created (username: admin, password: admin123)');
         }
 
-        // Gazelle sales table
+        // Gazelle sales table - UPDATED SCHEMA
         await pool.query(`
             CREATE TABLE IF NOT EXISTS gazelle_sales (
                 id SERIAL PRIMARY KEY,
                 order_ref VARCHAR(255),
                 order_date DATE,
-                customer_code VARCHAR(100),
+                customer VARCHAR(100),
                 customer_number VARCHAR(100),
                 customer_name VARCHAR(255),
                 invoice VARCHAR(100),
                 title TEXT,
-                imprint VARCHAR(255),
-                isbn13 VARCHAR(20),
+                publisher VARCHAR(255),
+                book_ean VARCHAR(20),
                 quantity INTEGER DEFAULT 0,
                 unit_price DECIMAL(10,2),
                 total_amount DECIMAL(10,2),
@@ -80,12 +80,11 @@ async function initializeDatabase() {
                 tracking VARCHAR(255),
                 city VARCHAR(255),
                 country VARCHAR(100),
-                publisher VARCHAR(255),
                 format VARCHAR(100),
                 discount DECIMAL(5,2),
                 upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 file_name VARCHAR(255),
-                UNIQUE(order_ref, invoice, isbn13)
+                UNIQUE(order_ref, invoice, book_ean)
             )
         `);
 
@@ -153,7 +152,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// GAZELLE UPLOAD - FIXED FOR YOUR FORMAT
+// GAZELLE UPLOAD - FIXED MAPPING
 app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
@@ -200,17 +199,16 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
             if (!row || row.length === 0 || !row[1]) continue; // Check if row has data
             
             try {
-                // Map columns based on your specification
-                // Note: Excel columns are 0-indexed in the array
+                // Map columns based on CORRECT specification
                 const recordData = {
                     order_date: row[0] || null, // Column A - Date
-                    customer_code: row[1] || '', // Column B - Cus
+                    customer: row[1] || '', // Column B - Cus
                     customer_number: row[2] || '', // Column C - Cus No
                     customer_name: row[3] || '', // Column D - Name
                     invoice: row[4] || '', // Column E - Invoice
                     title: row[5] || '', // Column F - Title
-                    imprint: row[6] || '', // Column G - Imprint
-                    isbn13: row[7] || '', // Column H - Book EAN
+                    publisher: row[6] || '', // Column G - Imprint (maps to publisher)
+                    book_ean: row[7] || '', // Column H - Book EAN
                     quantity: parseInt(row[8]) || 0, // Column I - Quantity
                     total_amount: parseFloat(row[9]) || 0, // Column J - TOTAL
                     carrier: row[10] || '', // Column K - Carrier
@@ -257,12 +255,12 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                 // Insert or update the record
                 const insertQuery = `
                     INSERT INTO gazelle_sales (
-                        order_ref, order_date, customer_code, customer_number,
-                        customer_name, invoice, title, imprint, isbn13,
+                        order_ref, order_date, customer, customer_number,
+                        customer_name, invoice, title, publisher, book_ean,
                         quantity, unit_price, total_amount, carrier, tracking,
                         file_name, upload_date
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)
-                    ON CONFLICT (order_ref, invoice, isbn13) 
+                    ON CONFLICT (order_ref, invoice, book_ean) 
                     DO UPDATE SET
                         quantity = EXCLUDED.quantity,
                         unit_price = EXCLUDED.unit_price,
@@ -274,13 +272,13 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                 const values = [
                     recordData.order_ref,
                     recordData.order_date,
-                    recordData.customer_code,
+                    recordData.customer,
                     recordData.customer_number,
                     recordData.customer_name,
                     recordData.invoice,
                     recordData.title,
-                    recordData.imprint,
-                    recordData.isbn13,
+                    recordData.publisher,
+                    recordData.book_ean,
                     recordData.quantity,
                     recordData.unit_price,
                     recordData.total_amount,
@@ -387,7 +385,7 @@ app.post('/api/test-gazelle-parse', upload.single('testFile'), async (req, res) 
     }
 });
 
-// Get Gazelle records
+// Get Gazelle records - UPDATED to match new schema
 app.get('/api/gazelle/records', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 1000;
@@ -583,7 +581,7 @@ app.get('/api/titles', async (req, res) => {
     }
 });
 
-// Generate report endpoint
+// Generate report endpoint - UPDATED to match new schema
 app.post('/api/generate-report', async (req, res) => {
     try {
         const { publisher, startDate, endDate, titles } = req.body;
@@ -591,7 +589,7 @@ app.post('/api/generate-report', async (req, res) => {
         const query = `
             SELECT DISTINCT
                 customer_name,
-                MAX(customer_code) as customer_code,
+                MAX(customer) as customer_code,
                 MAX(city) as city,
                 MAX(country) as country,
                 COUNT(DISTINCT order_ref) as total_orders,
@@ -684,7 +682,36 @@ app.delete('/api/users/:id', async (req, res) => {
     }
 });
 
-// Default route
+// Serve specific HTML files for specific routes
+app.get('/data-upload', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'data-upload.html'));
+});
+
+app.get('/booksonix', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'booksonix.html'));
+});
+
+app.get('/gazelle', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'gazelle.html'));
+});
+
+app.get('/customers', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'customers.html'));
+});
+
+app.get('/reports', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'reports.html'));
+});
+
+app.get('/settings', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
+});
+
+app.get('/login.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Default route - must be last
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
