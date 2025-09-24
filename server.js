@@ -320,7 +320,7 @@ app.get('/gazelle', (req, res) => {
 
 // REPLACE YOUR GAZELLE UPLOAD ROUTE WITH THIS FIXED VERSION
 
-// Upload Gazelle Sales file - FIXED TO HANDLE HEADER ROW
+// Upload Gazelle Sales file - ENHANCED DEBUG VERSION
 app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
@@ -331,69 +331,120 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
     console.log('File path:', req.file.path);
 
     try {
-        // Read the Excel file
-        const workbook = xlsx.readFile(req.file.path, {
-            cellDates: true,
-            cellNF: false,
-            cellText: false,
-            raw: false
-        });
-        
+        // Read the Excel file with multiple parsing attempts
+        const workbook = xlsx.readFile(req.file.path);
         const sheetName = workbook.SheetNames[0];
         console.log('Sheet name:', sheetName);
         
-        // Get the worksheet
         const worksheet = workbook.Sheets[sheetName];
         
-        // Convert to JSON BUT specify that headers are in row 2 (range starting from A2)
-        // This skips the first row which contains "Orders for Antenne created on..."
-        const rawData = xlsx.utils.sheet_to_json(worksheet, { 
+        // Method 1: Try reading with sheet_to_json, skipping first row
+        let data = xlsx.utils.sheet_to_json(worksheet, { 
+            range: 1, // Skip first row (0-indexed)
             raw: false,
             defval: '',
-            blankrows: false,
-            range: 1  // This tells xlsx to start from row 2 (0-indexed, so 1 = row 2)
+            blankrows: false
         });
-
-        console.log('Total rows found in Excel (excluding header):', rawData.length);
         
-        // If still getting EMPTY columns, let's read it differently
-        if (rawData.length > 0 && Object.keys(rawData[0]).some(key => key.includes('__EMPTY'))) {
-            console.log('Detecting malformed headers, trying alternative parsing...');
+        console.log('Method 1 - Rows found:', data.length);
+        
+        // If no data or headers look wrong, try Method 2
+        if (data.length === 0 || (data.length > 0 && !data[0]['Customer Name'])) {
+            console.log('Method 1 failed or incomplete, trying Method 2...');
             
-            // Alternative: Read the raw values and manually map columns
+            // Method 2: Manual parsing
             const range = xlsx.utils.decode_range(worksheet['!ref']);
-            const headers = [];
-            const data = [];
+            console.log('Sheet range:', worksheet['!ref']);
+            console.log('Rows in sheet:', range.e.r + 1);
+            console.log('Columns in sheet:', range.e.c + 1);
             
-            // Read headers from row 2 (index 1)
-            for (let C = range.s.c; C <= range.e.c; ++C) {
-                const address = xlsx.utils.encode_col(C) + '2'; // Row 2
-                const cell = worksheet[address];
-                headers.push(cell ? cell.v : '');
+            // First, let's check what's in the first few rows
+            console.log('\n=== Checking first 3 rows ===');
+            for (let R = 0; R <= Math.min(2, range.e.r); R++) {
+                const rowData = [];
+                for (let C = 0; C <= Math.min(5, range.e.c); C++) {
+                    const address = xlsx.utils.encode_col(C) + (R + 1);
+                    const cell = worksheet[address];
+                    rowData.push(cell ? cell.v : 'EMPTY');
+                }
+                console.log(`Row ${R + 1}:`, rowData);
             }
             
-            console.log('Headers found in row 2:', headers);
+            // Read headers from row 2 (index 1)
+            const headers = [];
+            for (let C = range.s.c; C <= range.e.c; ++C) {
+                const address = xlsx.utils.encode_col(C) + '2';
+                const cell = worksheet[address];
+                const headerValue = cell ? String(cell.v).trim() : '';
+                headers.push(headerValue);
+            }
+            
+            console.log('\nHeaders from row 2:', headers);
+            
+            // Create column index map for easier access
+            const columnMap = {};
+            headers.forEach((header, index) => {
+                columnMap[header] = index;
+            });
+            
+            console.log('Column mapping:', columnMap);
             
             // Read data starting from row 3
-            for (let R = 2; R <= range.e.r; ++R) {
+            data = [];
+            for (let R = 2; R <= range.e.r; R++) {
                 const row = {};
+                let hasData = false;
+                
                 for (let C = range.s.c; C <= range.e.c; ++C) {
                     const address = xlsx.utils.encode_col(C) + (R + 1);
                     const cell = worksheet[address];
-                    const header = headers[C] || `Column_${C}`;
-                    row[header] = cell ? cell.v : '';
+                    const header = headers[C];
+                    
+                    if (cell && cell.v !== undefined && cell.v !== null && cell.v !== '') {
+                        row[header] = cell.v;
+                        hasData = true;
+                    } else {
+                        row[header] = '';
+                    }
                 }
-                data.push(row);
+                
+                if (hasData) {
+                    data.push(row);
+                }
             }
-            
-            // Use this manually parsed data instead
-            rawData.length = 0;
-            rawData.push(...data);
         }
         
-        // Log column names from first data row
-        if (rawData.length > 0) {
-            console.log('Available columns:', Object.keys(rawData[0]));
+        console.log('\nTotal data rows after parsing:', data.length);
+        
+        // Log the structure of the first data row
+        if (data.length > 0) {
+            console.log('\nFirst data row structure:');
+            console.log('Available columns:', Object.keys(data[0]));
+            console.log('First row data sample:');
+            Object.keys(data[0]).forEach(key => {
+                const value = data[0][key];
+                console.log(`  "${key}": "${String(value).substring(0, 50)}${String(value).length > 50 ? '...' : ''}"`);
+            });
+        } else {
+            console.log('ERROR: No data rows found in the file!');
+            
+            // Try one more method - read everything as raw data
+            const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+            console.log('\nRaw data rows:', rawData.length);
+            if (rawData.length > 0) {
+                console.log('First raw row:', rawData[0]);
+                console.log('Second raw row:', rawData[1]);
+                console.log('Third raw row:', rawData[2]);
+            }
+            
+            return res.json({
+                success: false,
+                message: 'No data rows found in the Excel file',
+                details: {
+                    sheetName: sheetName,
+                    rawRowCount: rawData.length
+                }
+            });
         }
 
         let newRecords = 0;
@@ -401,64 +452,53 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
         let errors = 0;
         let skippedRows = 0;
         const errorDetails = [];
+        const successfulInserts = [];
 
         // Process each row
-        for (let i = 0; i < rawData.length; i++) {
-            const row = rawData[i];
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
             
             try {
-                // Map columns - try multiple variations
+                // Map columns - try all possible variations
                 const orderRef = (
+                    row['Order Ref.'] || 
                     row['Order Ref'] || 
-                    row['OrderRef'] || 
-                    row['order_ref'] || 
-                    row['Order Reference'] ||
-                    row['Order No'] ||
-                    row['Order Number'] ||
-                    row['Order Ref.'] ||  // With period
+                    row['OrderRef'] ||
+                    row['order_ref'] ||
                     ''
                 ).toString().trim();
                 
                 const customerName = (
                     row['Customer Name'] || 
                     row['CustomerName'] || 
-                    row['customer_name'] || 
+                    row['customer_name'] ||
                     row['Customer'] ||
-                    row['Retailer Name'] ||
-                    row['Retailer'] ||
                     ''
                 ).toString().trim();
                 
                 const city = (
                     row['City'] || 
-                    row['city'] || 
-                    row['Town'] ||
+                    row['city'] ||
                     ''
                 ).toString().trim();
                 
                 const country = (
                     row['Country'] || 
-                    row['country'] || 
-                    row['Country Code'] ||
+                    row['country'] ||
                     ''
                 ).toString().trim();
                 
                 const title = (
                     row['Title'] || 
-                    row['title'] || 
-                    row['Book Title'] ||
-                    row['Product Title'] ||
-                    row['Product'] ||
+                    row['title'] ||
                     ''
                 ).toString().trim();
                 
                 const isbn13 = (
                     row['ISBN-13'] || 
                     row['ISBN13'] || 
-                    row['isbn13'] || 
-                    row['ISBN'] ||
-                    row['EAN'] ||
-                    row['EAN13'] ||
+                    row['isbn-13'] ||
+                    row['isbn13'] ||
                     ''
                 ).toString().replace(/-/g, '').trim();
                 
@@ -466,121 +506,181 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                     row['Publishers'] || 
                     row['Publisher'] || 
                     row['publisher'] ||
-                    row['Pub'] ||
                     ''
                 ).toString().trim();
                 
                 const format = (
                     row['Format'] || 
-                    row['format'] || 
-                    row['Book Format'] ||
-                    row['Binding'] ||
+                    row['format'] ||
                     ''
                 ).toString().trim();
-
-                // Parse numeric values
+                
+                // Parse quantity
                 let quantity = 0;
-                const quantityValue = row['Quantity'] || row['quantity'] || row['Qty'] || row['QTY'] || 0;
-                if (quantityValue) {
-                    quantity = parseInt(quantityValue.toString().replace(/[^\d-]/g, '')) || 0;
+                const quantityValue = row['Quantity'] || row['quantity'] || row['Qty'] || '';
+                if (quantityValue !== '') {
+                    const cleanQty = String(quantityValue).replace(/[^\d-]/g, '');
+                    quantity = parseInt(cleanQty) || 0;
                 }
                 
+                // Parse unit price
                 let unitPrice = 0;
-                const priceValue = row['Unit Price'] || row['unit price'] || row['Unit price'] || row['Price'] || row['RRP'] || 0;
-                if (priceValue) {
-                    const cleanPrice = priceValue.toString()
+                const priceValue = 
+                    row['Unit price'] || 
+                    row['Unit Price'] || 
+                    row['unit price'] ||
+                    row['Unit price.'] ||
+                    '';
+                if (priceValue !== '') {
+                    const cleanPrice = String(priceValue)
                         .replace(/[£$€]/g, '')
                         .replace(/,/g, '')
                         .trim();
                     unitPrice = parseFloat(cleanPrice) || 0;
                 }
                 
+                // Parse discount
                 let discount = 0;
-                const discountValue = row['Discount %'] || row['Discount%'] || row['Discount'] || row['discount'] || row['Disc'] || 0;
-                if (discountValue) {
-                    discount = parseFloat(discountValue.toString().replace(/%/g, '')) || 0;
+                const discountValue = 
+                    row['Discount %'] || 
+                    row['Discount%'] || 
+                    row['Discount'] || 
+                    row['discount'] ||
+                    '';
+                if (discountValue !== '') {
+                    const cleanDiscount = String(discountValue).replace(/[%]/g, '').trim();
+                    discount = parseFloat(cleanDiscount) || 0;
                 }
-
+                
                 // Parse order date
                 let parsedDate = null;
-                const dateValue = row['Order Date'] || row['OrderDate'] || row['order_date'] || row['Date'] || row['Order date'];
+                const dateValue = 
+                    row['Order date'] || 
+                    row['Order Date'] || 
+                    row['OrderDate'] ||
+                    row['order_date'] ||
+                    row['Order date.'] ||
+                    '';
+                    
                 if (dateValue) {
-                    parsedDate = parseExcelDate(dateValue);
+                    // Handle Excel serial dates
+                    if (typeof dateValue === 'number') {
+                        parsedDate = new Date((dateValue - 25569) * 86400 * 1000);
+                    } 
+                    // Handle Date objects
+                    else if (dateValue instanceof Date) {
+                        parsedDate = dateValue;
+                    } 
+                    // Handle string dates
+                    else if (typeof dateValue === 'string') {
+                        const trimmed = dateValue.trim();
+                        
+                        // UK format DD/MM/YYYY
+                        if (trimmed.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+                            const parts = trimmed.split('/');
+                            parsedDate = new Date(
+                                parseInt(parts[2], 10),  // year
+                                parseInt(parts[1], 10) - 1,  // month (0-indexed)
+                                parseInt(parts[0], 10)   // day
+                            );
+                        } 
+                        // Try other formats
+                        else {
+                            parsedDate = new Date(trimmed);
+                        }
+                    }
+                    
+                    // Validate date
+                    if (parsedDate && isNaN(parsedDate.getTime())) {
+                        parsedDate = null;
+                    }
                 }
-
-                // Debug first 3 rows
-                if (i < 3) {
-                    console.log(`\nRow ${i + 1} parsed data:`, {
-                        orderRef,
-                        customerName,
-                        city,
-                        country,
-                        dateRaw: dateValue,
-                        dateParsed: parsedDate,
-                        quantity,
-                        unitPrice,
-                        discount,
-                        title: title.substring(0, 30) + '...'
-                    });
+                
+                // Log first 5 rows in detail
+                if (i < 5) {
+                    console.log(`\n=== Row ${i + 1} ===`);
+                    console.log('Order Ref:', orderRef);
+                    console.log('Customer:', customerName);
+                    console.log('City:', city);
+                    console.log('Country:', country);
+                    console.log('Date:', parsedDate);
+                    console.log('Quantity:', quantity);
+                    console.log('Unit Price:', unitPrice);
+                    console.log('Discount:', discount);
+                    console.log('Title:', title.substring(0, 50));
                 }
-
-                // Validate essential fields - make this less strict
+                
+                // Skip completely empty rows
                 if (!orderRef && !customerName && !title) {
-                    console.log(`Row ${i + 1}: Skipped - completely empty row`);
                     skippedRows++;
                     continue;
                 }
                 
-                // If we have at least a customer name or order ref, try to insert
-                if (orderRef || customerName) {
-                    // Insert the record
-                    const result = await pool.query(
-                        `INSERT INTO gazelle_sales 
-                        (order_ref, order_date, customer_name, city, country, title, isbn13, 
-                         quantity, unit_price, discount, publisher, format) 
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                        RETURNING id`,
-                        [
-                            orderRef || 'UNKNOWN', 
-                            parsedDate, 
-                            customerName || 'UNKNOWN', 
-                            city, 
-                            country, 
-                            title, 
-                            isbn13, 
-                            quantity, 
-                            unitPrice, 
-                            discount, 
-                            publisher, 
-                            format
-                        ]
-                    );
-
-                    if (result.rows.length > 0) {
-                        newRecords++;
-                        console.log(`Row ${i + 1}: Inserted new record with ID ${result.rows[0].id}`);
+                // Need at least order ref or customer name
+                if (!orderRef && !customerName) {
+                    console.log(`Row ${i + 1}: Skipping - no identifying information`);
+                    skippedRows++;
+                    continue;
+                }
+                
+                // Insert the record
+                const insertQuery = `
+                    INSERT INTO gazelle_sales 
+                    (order_ref, order_date, customer_name, city, country, title, isbn13, 
+                     quantity, unit_price, discount, publisher, format) 
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    RETURNING id
+                `;
+                
+                const values = [
+                    orderRef || 'UNKNOWN',
+                    parsedDate,
+                    customerName || 'UNKNOWN',
+                    city || '',
+                    country || '',
+                    title || '',
+                    isbn13 || '',
+                    quantity || 0,
+                    unitPrice || 0,
+                    discount || 0,
+                    publisher || '',
+                    format || ''
+                ];
+                
+                const result = await pool.query(insertQuery, values);
+                
+                if (result.rows.length > 0) {
+                    newRecords++;
+                    successfulInserts.push({
+                        row: i + 1,
+                        id: result.rows[0].id,
+                        orderRef: orderRef,
+                        customer: customerName
+                    });
+                    
+                    if (i < 5) {
+                        console.log(`Row ${i + 1}: SUCCESS - Inserted with ID ${result.rows[0].id}`);
+                    }
+                }
+                
+            } catch (err) {
+                if (err.code === '23505' || err.message.includes('duplicate')) {
+                    updatedRecords++;
+                    if (i < 5) {
+                        console.log(`Row ${i + 1}: Duplicate record`);
                     }
                 } else {
-                    console.log(`Row ${i + 1}: Skipped - no order ref or customer name`);
-                    skippedRows++;
-                }
-
-            } catch (err) {
-                // Check if it's a duplicate error or something else
-                if (err.message.includes('duplicate') || err.code === '23505') {
-                    updatedRecords++;
-                    console.log(`Row ${i + 1}: Record already exists (duplicate)`);
-                } else {
-                    console.error(`Error processing row ${i + 1}:`, err.message);
                     errors++;
                     errorDetails.push({
                         row: i + 1,
                         error: err.message,
-                        data: {
-                            orderRef: row['Order Ref'] || row[Object.keys(row)[0]],
-                            customer: row['Customer Name'] || row[Object.keys(row)[1]]
-                        }
+                        code: err.code,
+                        detail: err.detail
                     });
+                    
+                    if (i < 5) {
+                        console.log(`Row ${i + 1}: ERROR - ${err.message}`);
+                    }
                 }
             }
         }
@@ -588,20 +688,32 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
         // Clean up uploaded file
         fs.unlinkSync(req.file.path);
 
-        console.log('========================================');
-        console.log('Upload Summary:');
-        console.log('- Total rows:', rawData.length);
-        console.log('- New records:', newRecords);
+        console.log('\n========================================');
+        console.log('UPLOAD SUMMARY:');
+        console.log('- File processed:', req.file.originalname);
+        console.log('- Total rows in file:', data.length);
+        console.log('- New records inserted:', newRecords);
         console.log('- Duplicate records:', updatedRecords);
         console.log('- Skipped rows:', skippedRows);
         console.log('- Errors:', errors);
-        if (errorDetails.length > 0) {
-            console.log('Error details:', errorDetails.slice(0, 5));
+        
+        if (successfulInserts.length > 0) {
+            console.log('\nFirst successful inserts:');
+            successfulInserts.slice(0, 5).forEach(insert => {
+                console.log(`  Row ${insert.row}: ID ${insert.id} - ${insert.orderRef} / ${insert.customer}`);
+            });
         }
-        console.log('========================================');
+        
+        if (errorDetails.length > 0) {
+            console.log('\nErrors encountered:');
+            errorDetails.slice(0, 5).forEach(error => {
+                console.log(`  Row ${error.row}: ${error.error}`);
+            });
+        }
+        console.log('========================================\n');
 
-        // Return response
-        let message = `Processed ${rawData.length} rows. `;
+        // Build response message
+        let message = `Processed ${data.length} rows. `;
         if (newRecords > 0) message += `${newRecords} new records added. `;
         if (updatedRecords > 0) message += `${updatedRecords} duplicates found. `;
         if (skippedRows > 0) message += `${skippedRows} rows skipped. `;
@@ -614,18 +726,20 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
             duplicates: updatedRecords,
             errors: errors,
             details: {
-                totalRows: rawData.length,
+                fileName: req.file.originalname,
+                totalRows: data.length,
                 newRecords,
                 updatedRecords,
                 skippedRows,
                 errors,
-                errorSample: errorDetails.slice(0, 5)
+                errorSample: errorDetails.slice(0, 5),
+                successSample: successfulInserts.slice(0, 5)
             }
         });
 
     } catch (error) {
-        console.error('Fatal error during Gazelle upload:', error);
-        console.error('Stack trace:', error.stack);
+        console.error('FATAL ERROR during Gazelle upload:', error);
+        console.error('Error stack:', error.stack);
         
         // Clean up file if it still exists
         if (fs.existsSync(req.file.path)) {
