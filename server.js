@@ -349,6 +349,9 @@ app.post('/api/login', async (req, res) => {
 // BOOKSONIX ROUTES
 // =============================================
 
+// Updated Booksonix upload handler for server.js
+// Replace the existing app.post('/api/booksonix/upload', ...) with this:
+
 app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
@@ -369,14 +372,14 @@ app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, re
         let skippedNoSku = 0;
 
         for (const row of data) {
-            // Look for SKU in multiple possible column names and clean it
+            // Look for SKU in multiple possible column names
             let sku = row['SKU'] || row['sku'] || row['Sku'] || 
                        row['Product SKU'] || row['Product Code'] || 
                        row['Item Code'] || row['Code'] || '';
             
-            // Clean SKU - remove hyphens
+            // SKU stays as-is (or you can clean it differently if needed)
             if (sku) {
-                sku = String(sku).replace(/-/g, '').trim();
+                sku = String(sku).trim();
             }
             
             if (!sku) {
@@ -385,7 +388,13 @@ app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, re
                 continue;
             }
 
-            const isbn = row['ISBN-13'] || row['ISBN13'] || row['isbn-13'] || row['ISBN'] || row['EAN'] || '';
+            // Get ISBN and remove hyphens from it
+            let isbn = row['ISBN-13'] || row['ISBN13'] || row['isbn-13'] || row['ISBN'] || row['EAN'] || '';
+            if (isbn) {
+                // Remove hyphens from ISBN
+                isbn = String(isbn).replace(/-/g, '').trim();
+            }
+            
             const title = row['Title'] || row['TITLE'] || row['Product Title'] || '';
             const publisher = row['Publishers'] || row['Publisher'] || row['PUBLISHER'] || '';
             
