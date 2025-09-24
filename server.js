@@ -349,9 +349,6 @@ app.post('/api/login', async (req, res) => {
 // BOOKSONIX ROUTES
 // =============================================
 
-// Updated Booksonix upload handler for server.js
-// Replace the existing app.post('/api/booksonix/upload', ...) with this:
-
 app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
@@ -377,7 +374,7 @@ app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, re
                        row['Product SKU'] || row['Product Code'] || 
                        row['Item Code'] || row['Code'] || '';
             
-            // SKU stays as-is (or you can clean it differently if needed)
+            // SKU stays as-is (only trimmed)
             if (sku) {
                 sku = String(sku).trim();
             }
@@ -523,37 +520,66 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
     try {
         const workbook = xlsx.readFile(req.file.path);
         const sheetName = workbook.SheetNames[0];
-        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { raw: false });
 
         console.log('Total rows in Excel file:', data.length);
+        
+        // Log the first row to see column names
+        if (data.length > 0) {
+            console.log('Column headers found:', Object.keys(data[0]));
+        }
 
         let newRecords = 0;
         let duplicates = 0;
         let errors = 0;
+        let skippedRows = 0;
 
-        // Skip the first row (header) if needed
-        const startIndex = 0; // If your data starts from row 2, change this to 1
-
-        for (let i = startIndex; i < data.length; i++) {
+        for (let i = 0; i < data.length; i++) {
             const row = data[i];
             
-            // Map the Excel columns to database fields
-            const orderRef = row['Order Ref'] || row['OrderRef'] || row['order_ref'] || '';
-            const orderDate = row['Order Date'] || row['OrderDate'] || row['order_date'] || null;
-            const customerName = row['Customer Name'] || row['CustomerName'] || row['customer_name'] || '';
-            const city = row['City'] || row['city'] || '';
-            const country = row['Country'] || row['country'] || '';
-            const title = row['Title'] || row['title'] || '';
-            const isbn13 = row['ISBN13'] || row['isbn13'] || row['ISBN-13'] || '';
-            const quantity = parseInt(row['Quantity'] || row['quantity'] || 0) || 0;
-            const unitPrice = parseFloat(row['Unit Price'] || row['UnitPrice'] || row['unit_price'] || 0) || 0;
-            const discount = parseFloat(row['Discount'] || row['discount'] || 0) || 0;
-            const publisher = row['Publisher'] || row['publisher'] || '';
-            const format = row['Format'] || row['format'] || '';
+            // Map the Excel columns to database fields - check multiple possible column names
+            const orderRef = row['Order Ref'] || row['OrderRef'] || row['order_ref'] || 
+                           row['Order Reference'] || row['Order #'] || row['Order Number'] || 
+                           row['Ref'] || '';
+            
+            const orderDate = row['Order Date'] || row['OrderDate'] || row['order_date'] || 
+                            row['Date'] || row['Order_Date'] || null;
+            
+            const customerName = row['Customer Name'] || row['CustomerName'] || row['customer_name'] || 
+                               row['Customer'] || row['Client'] || row['Name'] || 
+                               row['Ship To Name'] || '';
+            
+            const city = row['City'] || row['city'] || row['Ship City'] || row['Ship To City'] || 
+                        row['Shipping City'] || '';
+            
+            const country = row['Country'] || row['country'] || row['Ship Country'] || 
+                          row['Ship To Country'] || row['Shipping Country'] || '';
+            
+            const title = row['Title'] || row['title'] || row['Product Title'] || 
+                        row['Product Name'] || row['Item Title'] || row['Book Title'] || '';
+            
+            const isbn13 = row['ISBN13'] || row['isbn13'] || row['ISBN-13'] || row['ISBN'] || 
+                         row['isbn'] || row['EAN'] || row['Product Code'] || '';
+            
+            const quantity = parseInt(row['Quantity'] || row['quantity'] || row['Qty'] || 
+                                    row['Ordered Quantity'] || row['Order Quantity'] || 0) || 0;
+            
+            const unitPrice = parseFloat(row['Unit Price'] || row['UnitPrice'] || row['unit_price'] || 
+                                       row['Price'] || row['Unit_Price'] || row['Item Price'] || 0) || 0;
+            
+            const discount = parseFloat(row['Discount'] || row['discount'] || row['Discount %'] || 
+                                      row['Disc'] || row['Disc %'] || 0) || 0;
+            
+            const publisher = row['Publisher'] || row['publisher'] || row['Pub'] || 
+                            row['Publishing House'] || '';
+            
+            const format = row['Format'] || row['format'] || row['Book Format'] || 
+                         row['Product Format'] || '';
 
             // Skip rows without essential data
-            if (!orderRef || !customerName) {
-                errors++;
+            if (!orderRef && !customerName) {
+                console.log(`Row ${i + 1}: Skipped - no order ref or customer name`);
+                skippedRows++;
                 continue;
             }
 
@@ -562,7 +588,22 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                 let parsedDate = null;
                 if (orderDate) {
                     if (typeof orderDate === 'string') {
+                        // Try different date formats
                         parsedDate = new Date(orderDate);
+                        
+                        // If invalid, try UK format (DD/MM/YYYY)
+                        if (isNaN(parsedDate.getTime()) && orderDate.includes('/')) {
+                            const parts = orderDate.split('/');
+                            if (parts.length === 3) {
+                                // Try DD/MM/YYYY format
+                                parsedDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+                                
+                                // If still invalid, try MM/DD/YYYY format
+                                if (isNaN(parsedDate.getTime())) {
+                                    parsedDate = new Date(`${parts[2]}-${parts[0]}-${parts[1]}`);
+                                }
+                            }
+                        }
                     } else if (orderDate instanceof Date) {
                         parsedDate = orderDate;
                     } else if (typeof orderDate === 'number') {
@@ -603,13 +644,21 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                     duplicates++;
                 }
             } catch (err) {
-                console.error('Error inserting Gazelle record:', err.message);
+                console.error(`Error inserting row ${i + 1}:`, err.message);
                 errors++;
             }
         }
 
         // Clean up uploaded file
         fs.unlinkSync(req.file.path);
+
+        console.log('Upload complete:', {
+            totalRows: data.length,
+            newRecords,
+            duplicates,
+            errors,
+            skippedRows
+        });
 
         res.json({ 
             success: true, 
