@@ -574,133 +574,28 @@
             </form>
             <div id="status" class="status"></div>
         </div>
-<!-- REPLACE the debug section in gazelle.html with this improved version -->
 
-<!-- Debug Section -->
-<!-- ADD this additional debug section to gazelle.html, right after the existing debug section -->
-
-<!-- Simple Direct Upload Test -->
-<div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 20px 0; border-radius: 5px;">
-    <h3 style="margin-top: 0;">Direct File Test</h3>
-    <p style="font-size: 12px; margin: 10px 0;">This bypasses the complex file handling to test the upload directly.</p>
-    
-    <input type="file" id="directFileInput" accept=".xls,.xlsx" style="margin: 10px 0;">
-    
-    <div style="margin: 10px 0;">
-        <button onclick="testDirectParse()" style="background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
-            Test Parse This File
-        </button>
-        
-        <button onclick="testDirectUpload()" style="background: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
-            Upload This File to Gazelle
-        </button>
-    </div>
-    
-    <div id="directTestOutput" style="background: white; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; max-height: 400px; overflow-y: auto; display: none; border: 1px solid #ddd;">
-    </div>
-</div>
-
-<script>
-// Direct file test functions
-async function testDirectParse() {
-    const fileInput = document.getElementById('directFileInput');
-    const output = document.getElementById('directTestOutput');
-    
-    if (!fileInput.files || fileInput.files.length === 0) {
-        alert('Please select a file using the file input above');
-        return;
-    }
-    
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append('testFile', file);
-    
-    output.style.display = 'block';
-    output.innerHTML = 'Testing file: ' + file.name + '...<br><br>';
-    
-    try {
-        const response = await fetch('/api/test-gazelle-parse', {
-            method: 'POST',
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        output.innerHTML += '<strong>Parse Results:</strong><br>';
-        output.innerHTML += 'Total Raw Rows: ' + data.rawRowCount + '<br>';
-        output.innerHTML += 'Method 1 rows: ' + data.method1Count + '<br>';
-        output.innerHTML += 'Method 2 rows: ' + data.method2Count + '<br><br>';
-        
-        output.innerHTML += '<strong>First 5 Raw Rows:</strong><br>';
-        output.innerHTML += '<pre>' + JSON.stringify(data.firstRawRows, null, 2) + '</pre><br>';
-        
-        output.innerHTML += '<strong>Parsed Data Sample (Method 2):</strong><br>';
-        output.innerHTML += '<pre>' + JSON.stringify(data.method2Sample, null, 2) + '</pre>';
-        
-        // Store for debugging
-        window.lastParseResult = data;
-        console.log('Parse result stored in window.lastParseResult', data);
-        
-    } catch (error) {
-        output.innerHTML += '<strong style="color: red;">Error:</strong> ' + error.message;
-    }
-}
-
-async function testDirectUpload() {
-    const fileInput = document.getElementById('directFileInput');
-    const output = document.getElementById('directTestOutput');
-    
-    if (!fileInput.files || fileInput.files.length === 0) {
-        alert('Please select a file using the file input above');
-        return;
-    }
-    
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append('gazelleFile', file);
-    
-    output.style.display = 'block';
-    output.innerHTML = 'Uploading file: ' + file.name + '...<br><br>';
-    
-    try {
-        const response = await fetch('/api/gazelle/upload', {
-            method: 'POST',
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        console.log('Direct upload response:', data);
-        
-        if (data.success) {
-            output.innerHTML += '<strong style="color: green;">Success!</strong><br>';
-            output.innerHTML += 'Message: ' + data.message + '<br>';
-            output.innerHTML += 'New Records: ' + (data.newRecords || 0) + '<br>';
-            output.innerHTML += 'Duplicates: ' + (data.duplicates || 0) + '<br>';
-            output.innerHTML += 'Errors: ' + (data.errors || 0) + '<br><br>';
+        <!-- Simple Direct Upload Test -->
+        <div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 20px 0; border-radius: 5px;">
+            <h3 style="margin-top: 0;">Direct File Test (Debug Tool)</h3>
+            <p style="font-size: 12px; margin: 10px 0;">This bypasses the complex file handling to test the upload directly.</p>
             
-            if (data.details) {
-                output.innerHTML += '<strong>Details:</strong><br>';
-                output.innerHTML += '<pre>' + JSON.stringify(data.details, null, 2) + '</pre>';
-            }
-        } else {
-            output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
-            output.innerHTML += 'Error: ' + data.error + '<br>';
-            if (data.details) {
-                output.innerHTML += '<pre>' + data.details + '</pre>';
-            }
-        }
-        
-        // Refresh stats
-        loadRecords();
-        loadStats();
-        
-    } catch (error) {
-        output.innerHTML += '<strong style="color: red;">Network Error:</strong> ' + error.message;
-        console.error('Direct upload error:', error);
-    }
-}
-</script>
+            <input type="file" id="directFileInput" accept=".xls,.xlsx" style="margin: 10px 0;">
+            
+            <div style="margin: 10px 0;">
+                <button onclick="testDirectParse()" style="background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
+                    Test Parse This File
+                </button>
+                
+                <button onclick="testDirectUpload()" style="background: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+                    Upload This File to Gazelle
+                </button>
+            </div>
+            
+            <div id="directTestOutput" style="background: white; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; max-height: 400px; overflow-y: auto; display: none; border: 1px solid #ddd;">
+            </div>
+        </div>
+
         <!-- Statistics Section -->
         <div class="stats-section">
             <div class="stat-card">
@@ -792,203 +687,174 @@ async function testDirectUpload() {
         const newRecordsEl = document.getElementById('newRecords');
         const duplicatesSkippedEl = document.getElementById('duplicatesSkipped');
 
-        <!-- REPLACE the entire script section in gazelle.html that handles file selection -->
-<!-- Find the section starting with "let selectedFiles = [];" and replace everything up to the upload form handler -->
+        let selectedFiles = [];
+        let gazelleRecords = [];
 
-<script>
-// Display current user
-if (window.currentUser) {
-    document.getElementById('currentUserName').textContent = window.currentUser.username;
-}
+        // Make selectedFiles globally accessible for debugging
+        window.selectedFiles = selectedFiles;
 
-// DOM elements
-const uploadForm = document.getElementById('uploadForm');
-const fileInput = document.getElementById('fileInput');
-const uploadBtn = document.getElementById('uploadBtn');
-const clearBtn = document.getElementById('clearBtn');
-const status = document.getElementById('status');
-const fileDropArea = document.getElementById('fileDropArea');
-const fileCount = document.getElementById('fileCount');
-const fileList = document.getElementById('fileList');
-const uploadProgress = document.getElementById('uploadProgress');
-const progressBar = document.getElementById('progressBar');
-const progressText = document.getElementById('progressText');
-const recordsContainer = document.getElementById('recordsContainer');
-const refreshBtn = document.getElementById('refreshBtn');
-const exportBtn = document.getElementById('exportBtn');
-const recordCount = document.getElementById('recordCount');
-const showingInfo = document.getElementById('showingInfo');
+        // Drag and drop functionality
+        fileDropArea.addEventListener('click', () => {
+            const input = document.getElementById('fileInput');
+            if (input) {
+                input.click();
+            }
+        });
 
-// Stats elements
-const totalRecordsEl = document.getElementById('totalRecords');
-const uniqueOrdersEl = document.getElementById('uniqueOrders');
-const totalQuantityEl = document.getElementById('totalQuantity');
-const totalRevenueEl = document.getElementById('totalRevenue');
-const uniqueCustomersEl = document.getElementById('uniqueCustomers');
-const uniqueTitlesEl = document.getElementById('uniqueTitles');
-const newRecordsEl = document.getElementById('newRecords');
-const duplicatesSkippedEl = document.getElementById('duplicatesSkipped');
+        fileDropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.add('dragover');
+        });
 
-let selectedFiles = [];
-let gazelleRecords = [];
+        fileDropArea.addEventListener('dragleave', () => {
+            fileDropArea.classList.remove('dragover');
+        });
 
-// Make selectedFiles globally accessible for debugging
-window.selectedFiles = selectedFiles;
-
-// Drag and drop functionality
-fileDropArea.addEventListener('click', () => {
-    const input = document.getElementById('fileInput');
-    if (input) {
-        input.click();
-    }
-});
-
-fileDropArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    fileDropArea.classList.add('dragover');
-});
-
-fileDropArea.addEventListener('dragleave', () => {
-    fileDropArea.classList.remove('dragover');
-});
-
-fileDropArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    fileDropArea.classList.remove('dragover');
-    
-    const files = e.dataTransfer.files;
-    handleFileSelection(files);
-});
-
-// File input change handler - using event delegation
-document.addEventListener('change', function(e) {
-    if (e.target && e.target.id === 'fileInput') {
-        handleFileSelection(e.target.files);
-    }
-});
-
-// Clear button handler
-clearBtn.addEventListener('click', () => {
-    clearFileSelection();
-});
-
-// Handle file selection
-function handleFileSelection(files) {
-    selectedFiles = [];
-    
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        if (file.name.match(/\.(xlsx|xls)$/i)) {
-            selectedFiles.push({
-                file: file,
-                status: 'pending',
-                message: ''
-            });
-        }
-    }
-    
-    // Update global reference
-    window.selectedFiles = selectedFiles;
-    
-    if (selectedFiles.length === 0) {
-        showStatus('Please select valid Excel files (.xls, .xlsx)', 'error');
-        return;
-    }
-    
-    console.log('Files selected:', selectedFiles.length, selectedFiles.map(f => f.file.name));
-    updateFileDisplay();
-}
-
-// Clear file selection
-function clearFileSelection() {
-    selectedFiles = [];
-    window.selectedFiles = selectedFiles;
-    
-    const input = document.getElementById('fileInput');
-    if (input) {
-        input.value = '';
-    }
-    
-    updateFileDisplay();
-    uploadProgress.style.display = 'none';
-}
-
-// Update file display
-function updateFileDisplay() {
-    if (selectedFiles.length === 0) {
-        fileCount.style.display = 'none';
-        fileList.style.display = 'none';
-        clearBtn.style.display = 'none';
-        
-        // Reset the drop area but keep the input element
-        const existingInput = document.getElementById('fileInput');
-        if (existingInput) {
-            existingInput.value = ''; // Just clear the value, don't recreate
-        }
-        
-        // Update the display text
-        const dropText = fileDropArea.querySelector('div');
-        if (dropText) {
-            dropText.innerHTML = '📁 Drop Excel files here or click to browse';
-        }
-    } else {
-        fileCount.textContent = `${selectedFiles.length} file(s) selected`;
-        fileCount.style.display = 'block';
-        clearBtn.style.display = 'block';
-        
-        // Update file list
-        fileList.innerHTML = '';
-        selectedFiles.forEach((fileInfo, index) => {
-            const fileItem = document.createElement('div');
-            fileItem.className = 'file-item';
+        fileDropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.remove('dragover');
             
-            const fileName = document.createElement('div');
-            fileName.className = 'file-name';
-            fileName.textContent = fileInfo.file.name;
+            const files = e.dataTransfer.files;
+            handleFileSelection(files);
+        });
+
+        // File input change handler
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelection(e.target.files);
+        });
+
+        // Clear button handler
+        clearBtn.addEventListener('click', () => {
+            clearFileSelection();
+        });
+
+        // Refresh button handler
+        refreshBtn.addEventListener('click', () => {
+            loadRecords();
+            loadStats();
+        });
+
+        // Export button handler
+        exportBtn.addEventListener('click', () => {
+            exportToCSV();
+        });
+
+        // Handle file selection
+        function handleFileSelection(files) {
+            selectedFiles = [];
             
-            const fileSize = document.createElement('span');
-            fileSize.className = 'file-size';
-            fileSize.textContent = formatFileSize(fileInfo.file.size);
-            
-            const fileStatus = document.createElement('span');
-            fileStatus.className = `file-status status-${fileInfo.status}`;
-            fileStatus.textContent = fileInfo.status;
-            
-            const removeBtn = document.createElement('button');
-            removeBtn.className = 'remove-file';
-            removeBtn.textContent = '×';
-            removeBtn.onclick = () => removeFile(index);
-            
-            fileItem.appendChild(fileName);
-            fileItem.appendChild(fileSize);
-            fileItem.appendChild(fileStatus);
-            if (fileInfo.status === 'pending') {
-                fileItem.appendChild(removeBtn);
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (file.name.match(/\.(xlsx|xls)$/i)) {
+                    selectedFiles.push({
+                        file: file,
+                        status: 'pending',
+                        message: ''
+                    });
+                }
             }
             
-            fileList.appendChild(fileItem);
-        });
-        
-        fileList.style.display = 'block';
-    }
-}
+            // Update global reference
+            window.selectedFiles = selectedFiles;
+            
+            if (selectedFiles.length === 0) {
+                showStatus('Please select valid Excel files (.xls, .xlsx)', 'error');
+                return;
+            }
+            
+            console.log('Files selected:', selectedFiles.length, selectedFiles.map(f => f.file.name));
+            updateFileDisplay();
+        }
 
-// Remove individual file
-function removeFile(index) {
-    selectedFiles.splice(index, 1);
-    window.selectedFiles = selectedFiles;
-    updateFileDisplay();
-}
+        // Clear file selection
+        function clearFileSelection() {
+            selectedFiles = [];
+            window.selectedFiles = selectedFiles;
+            fileInput.value = '';
+            updateFileDisplay();
+            uploadProgress.style.display = 'none';
+        }
 
-// Format file size
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-}
-</script>
+        // Update file display
+        function updateFileDisplay() {
+            if (selectedFiles.length === 0) {
+                fileCount.style.display = 'none';
+                fileList.style.display = 'none';
+                clearBtn.style.display = 'none';
+                fileDropArea.innerHTML = `
+                    <div>📁 Drop Excel files here or click to browse</div>
+                    <div class="file-drop-text">Supports .xls and .xlsx files</div>
+                    <div class="file-count" id="fileCount" style="display: none;"></div>
+                `;
+                
+                // Re-add the input element
+                const newInput = document.createElement('input');
+                newInput.type = 'file';
+                newInput.id = 'fileInput';
+                newInput.accept = '.xls,.xlsx';
+                newInput.multiple = true;
+                newInput.style.display = 'none';
+                newInput.addEventListener('change', (e) => handleFileSelection(e.target.files));
+                fileDropArea.appendChild(newInput);
+                fileInput = newInput;
+            } else {
+                fileCount.textContent = `${selectedFiles.length} file(s) selected`;
+                fileCount.style.display = 'block';
+                clearBtn.style.display = 'block';
+                
+                // Update file list
+                fileList.innerHTML = '';
+                selectedFiles.forEach((fileInfo, index) => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
+                    
+                    const fileName = document.createElement('div');
+                    fileName.className = 'file-name';
+                    fileName.textContent = fileInfo.file.name;
+                    
+                    const fileSize = document.createElement('span');
+                    fileSize.className = 'file-size';
+                    fileSize.textContent = formatFileSize(fileInfo.file.size);
+                    
+                    const fileStatus = document.createElement('span');
+                    fileStatus.className = `file-status status-${fileInfo.status}`;
+                    fileStatus.textContent = fileInfo.status;
+                    
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'remove-file';
+                    removeBtn.textContent = '×';
+                    removeBtn.onclick = () => removeFile(index);
+                    
+                    fileItem.appendChild(fileName);
+                    fileItem.appendChild(fileSize);
+                    fileItem.appendChild(fileStatus);
+                    if (fileInfo.status === 'pending') {
+                        fileItem.appendChild(removeBtn);
+                    }
+                    
+                    fileList.appendChild(fileItem);
+                });
+                
+                fileList.style.display = 'block';
+            }
+        }
+
+        // Remove individual file
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            window.selectedFiles = selectedFiles;
+            updateFileDisplay();
+        }
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
         // Upload form handler
         uploadForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -1252,6 +1118,106 @@ function formatFileSize(bytes) {
             document.body.removeChild(link);
 
             showStatus('Data exported successfully', 'success');
+        }
+
+        // Direct file test functions for debugging
+        async function testDirectParse() {
+            const fileInput = document.getElementById('directFileInput');
+            const output = document.getElementById('directTestOutput');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('Please select a file using the file input above');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('testFile', file);
+            
+            output.style.display = 'block';
+            output.innerHTML = 'Testing file: ' + file.name + '...<br><br>';
+            
+            try {
+                const response = await fetch('/api/test-gazelle-parse', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                output.innerHTML += '<strong>Parse Results:</strong><br>';
+                output.innerHTML += 'Total Raw Rows: ' + data.rawRowCount + '<br>';
+                output.innerHTML += 'Method 1 rows: ' + data.method1Count + '<br>';
+                output.innerHTML += 'Method 2 rows: ' + data.method2Count + '<br><br>';
+                
+                output.innerHTML += '<strong>First 5 Raw Rows:</strong><br>';
+                output.innerHTML += '<pre>' + JSON.stringify(data.firstRawRows, null, 2) + '</pre><br>';
+                
+                output.innerHTML += '<strong>Parsed Data Sample (Method 2):</strong><br>';
+                output.innerHTML += '<pre>' + JSON.stringify(data.method2Sample, null, 2) + '</pre>';
+                
+                // Store for debugging
+                window.lastParseResult = data;
+                console.log('Parse result stored in window.lastParseResult', data);
+                
+            } catch (error) {
+                output.innerHTML += '<strong style="color: red;">Error:</strong> ' + error.message;
+            }
+        }
+
+        async function testDirectUpload() {
+            const fileInput = document.getElementById('directFileInput');
+            const output = document.getElementById('directTestOutput');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('Please select a file using the file input above');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('gazelleFile', file);
+            
+            output.style.display = 'block';
+            output.innerHTML = 'Uploading file: ' + file.name + '...<br><br>';
+            
+            try {
+                const response = await fetch('/api/gazelle/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                console.log('Direct upload response:', data);
+                
+                if (data.success) {
+                    output.innerHTML += '<strong style="color: green;">Success!</strong><br>';
+                    output.innerHTML += 'Message: ' + data.message + '<br>';
+                    output.innerHTML += 'New Records: ' + (data.newRecords || 0) + '<br>';
+                    output.innerHTML += 'Duplicates: ' + (data.duplicates || 0) + '<br>';
+                    output.innerHTML += 'Errors: ' + (data.errors || 0) + '<br><br>';
+                    
+                    if (data.details) {
+                        output.innerHTML += '<strong>Details:</strong><br>';
+                        output.innerHTML += '<pre>' + JSON.stringify(data.details, null, 2) + '</pre>';
+                    }
+                } else {
+                    output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
+                    output.innerHTML += 'Error: ' + data.error + '<br>';
+                    if (data.details) {
+                        output.innerHTML += '<pre>' + data.details + '</pre>';
+                    }
+                }
+                
+                // Refresh stats
+                loadRecords();
+                loadStats();
+                
+            } catch (error) {
+                output.innerHTML += '<strong style="color: red;">Network Error:</strong> ' + error.message;
+                console.error('Direct upload error:', error);
+            }
         }
 
         // Initialize on page load
