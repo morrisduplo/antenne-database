@@ -1833,7 +1833,118 @@ app.get('/health', async (req, res) => {
         });
     }
 });
+// ADD THIS TEST ENDPOINT TO YOUR server.js (anywhere before app.listen)
 
+// Test endpoint to verify database insertion works
+app.get('/api/test-gazelle-insert', async (req, res) => {
+    console.log('Testing Gazelle table insert...');
+    
+    try {
+        // First, check if the table exists and its structure
+        const tableInfo = await pool.query(`
+            SELECT column_name, data_type, is_nullable 
+            FROM information_schema.columns 
+            WHERE table_name = 'gazelle_sales'
+            ORDER BY ordinal_position
+        `);
+        
+        console.log('Gazelle table columns:', tableInfo.rows);
+        
+        // Try to insert a test record
+        const testResult = await pool.query(
+            `INSERT INTO gazelle_sales 
+            (order_ref, order_date, customer_name, city, country, title, isbn13, 
+             quantity, unit_price, discount, publisher, format) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING *`,
+            [
+                'TEST-' + Date.now(),
+                new Date(),
+                'Test Customer',
+                'London',
+                'UK',
+                'Test Book Title',
+                '9781234567890',
+                1,
+                9.99,
+                0,
+                'Test Publisher',
+                'Paperback'
+            ]
+        );
+        
+        console.log('Test insert successful:', testResult.rows[0]);
+        
+        res.json({
+            success: true,
+            message: 'Test record inserted successfully',
+            tableStructure: tableInfo.rows,
+            insertedRecord: testResult.rows[0]
+        });
+        
+    } catch (error) {
+        console.error('Test insert failed:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            code: error.code,
+            detail: error.detail,
+            hint: error.hint,
+            table: error.table,
+            constraint: error.constraint
+        });
+    }
+});
+
+// Test endpoint to read and parse the Excel file without inserting
+app.post('/api/test-gazelle-parse', upload.single('testFile'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+    
+    console.log('Test parsing file:', req.file.originalname);
+    
+    try {
+        const workbook = xlsx.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Read as raw array data
+        const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
+        
+        console.log('Total raw rows:', rawData.length);
+        console.log('First 5 rows (raw):');
+        rawData.slice(0, 5).forEach((row, index) => {
+            console.log(`Row ${index + 1}:`, row.slice(0, 5)); // First 5 columns only
+        });
+        
+        // Try different parsing methods
+        const method1 = xlsx.utils.sheet_to_json(worksheet);
+        const method2 = xlsx.utils.sheet_to_json(worksheet, { range: 1 });
+        const method3 = xlsx.utils.sheet_to_json(worksheet, { header: 'A' });
+        
+        // Clean up
+        fs.unlinkSync(req.file.path);
+        
+        res.json({
+            fileName: req.file.originalname,
+            rawRowCount: rawData.length,
+            firstRawRows: rawData.slice(0, 5),
+            method1Count: method1.length,
+            method1Sample: method1.slice(0, 2),
+            method2Count: method2.length,
+            method2Sample: method2.slice(0, 2),
+            method3Count: method3.length,
+            method3Sample: method3.slice(0, 2)
+        });
+        
+    } catch (error) {
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
