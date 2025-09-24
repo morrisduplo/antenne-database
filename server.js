@@ -1,1322 +1,696 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gazelle Sales - Antenne Books</title>
-    
-    <!-- Authentication Check Script -->
-    <script>
-        // Authentication check for protected pages
-        (function() {
-            // Check authentication
-            const session = localStorage.getItem('userSession');
-            
-            if (!session) {
-                // No session, redirect to login
-                window.location.href = '/login.html';
-                return;
+const express = require('express');
+const path = require('path');
+const { Pool } = require('pg');
+const multer = require('multer');
+const XLSX = require('xlsx');
+const bcrypt = require('bcryptjs');
+const fs = require('fs');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Database connection
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+// Middleware
+app.use(express.json());
+app.use(express.static('public'));
+
+// Multer configuration for file uploads
+const upload = multer({ 
+    dest: 'uploads/',
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
+// Test database connection
+pool.query('SELECT NOW()', (err, res) => {
+    if (err) {
+        console.error('Database connection error:', err);
+    } else {
+        console.log('Database connected successfully at:', res.rows[0].now);
+    }
+});
+
+// Initialize database tables
+async function initializeDatabase() {
+    try {
+        // Users table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                email VARCHAR(255),
+                role VARCHAR(50) DEFAULT 'viewer',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Check if admin user exists
+        const adminCheck = await pool.query('SELECT * FROM users WHERE username = $1', ['admin']);
+        if (adminCheck.rows.length === 0) {
+            const hashedPassword = await bcrypt.hash('admin123', 10);
+            await pool.query(
+                'INSERT INTO users (username, password, email, role) VALUES ($1, $2, $3, $4)',
+                ['admin', hashedPassword, 'admin@antennebooks.com', 'admin']
+            );
+            console.log('Default admin user created (username: admin, password: admin123)');
+        }
+
+        // Gazelle sales table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS gazelle_sales (
+                id SERIAL PRIMARY KEY,
+                order_ref VARCHAR(255),
+                order_date DATE,
+                customer_code VARCHAR(100),
+                customer_number VARCHAR(100),
+                customer_name VARCHAR(255),
+                invoice VARCHAR(100),
+                title TEXT,
+                imprint VARCHAR(255),
+                isbn13 VARCHAR(20),
+                quantity INTEGER DEFAULT 0,
+                unit_price DECIMAL(10,2),
+                total_amount DECIMAL(10,2),
+                carrier VARCHAR(100),
+                tracking VARCHAR(255),
+                city VARCHAR(255),
+                country VARCHAR(100),
+                publisher VARCHAR(255),
+                format VARCHAR(100),
+                discount DECIMAL(5,2),
+                upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                file_name VARCHAR(255),
+                UNIQUE(order_ref, invoice, isbn13)
+            )
+        `);
+
+        // Booksonix table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS booksonix (
+                id SERIAL PRIMARY KEY,
+                sku VARCHAR(100) UNIQUE,
+                isbn VARCHAR(20),
+                title VARCHAR(500),
+                publisher VARCHAR(255),
+                price DECIMAL(10,2),
+                upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Customer name mappings
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS customer_name_mappings (
+                id SERIAL PRIMARY KEY,
+                original_name VARCHAR(255) UNIQUE NOT NULL,
+                display_name VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        console.log('Database tables initialized successfully');
+    } catch (error) {
+        console.error('Error initializing database:', error);
+    }
+}
+
+// Initialize database on startup
+initializeDatabase();
+
+// Login endpoint
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        
+        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+        
+        const user = result.rows[0];
+        const passwordMatch = await bcrypt.compare(password, user.password);
+        
+        if (!passwordMatch) {
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+        
+        res.json({ 
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role
             }
+        });
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GAZELLE UPLOAD - FIXED FOR YOUR FORMAT
+app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        console.log('Processing Gazelle file:', req.file.originalname);
+        
+        // Read the Excel file
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Convert to JSON - DO NOT SKIP HEADER ROW
+        // Use header: 1 to get raw arrays, then process manually
+        const rawData = XLSX.utils.sheet_to_json(worksheet, { 
+            header: 1,
+            defval: '',
+            raw: false,
+            dateNF: 'yyyy-mm-dd'
+        });
+
+        console.log('Raw data rows:', rawData.length);
+        
+        if (rawData.length < 2) {
+            fs.unlinkSync(req.file.path);
+            return res.status(400).json({ error: 'File appears to be empty or invalid' });
+        }
+
+        // Skip first row (it might contain other info), headers are on row 2 (index 1)
+        const headers = rawData[1]; // Second row contains headers
+        const dataRows = rawData.slice(2); // Data starts from third row
+        
+        console.log('Headers found:', headers);
+        console.log('Data rows to process:', dataRows.length);
+
+        let newRecords = 0;
+        let duplicates = 0;
+        let errors = 0;
+
+        // Process each data row
+        for (const row of dataRows) {
+            // Skip empty rows
+            if (!row || row.length === 0 || !row[1]) continue; // Check if row has data
             
             try {
-                const sessionData = JSON.parse(session);
-                
-                // Check if session is still valid
-                const maxAge = sessionData.remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-                if (new Date() - new Date(sessionData.timestamp) > maxAge) {
-                    // Session expired
-                    localStorage.removeItem('userSession');
-                    window.location.href = '/login.html';
-                    return;
-                }
-                
-                // Store user info globally for the page to use
-                window.currentUser = sessionData;
-                
-            } catch (e) {
-                // Invalid session data
-                localStorage.removeItem('userSession');
-                window.location.href = '/login.html';
-            }
-        })();
-        
-        function logout() {
-            localStorage.removeItem('userSession');
-            window.location.href = '/login.html';
-        }
-    </script>
-    
-    <!-- Import Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Courier', monospace;
-            line-height: 1.6;
-            color: #333;
-            background-color: #f4f4f4;
-            padding: 20px;
-        }
-
-        h1, h2, h3, h4, h5, h6 {
-            font-family: 'EB Garamond', serif;
-            font-weight: 400;
-        }
-
-        .container {
-            max-width: 1600px;
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            border-bottom: 2px solid #f1f3f4;
-            padding-bottom: 20px;
-        }
-
-        h1 {
-            color: #333333;
-        }
-
-        .header-right {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-
-        .user-info {
-            font-size: 13px;
-            color: #666;
-        }
-
-        .user-info strong {
-            color: #333;
-        }
-
-        .btn-logout {
-            background: #dc3545;
-            color: white;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            text-decoration: none;
-            transition: background-color 0.3s;
-        }
-
-        .btn-logout:hover {
-            background: #c82333;
-        }
-
-        .back-link {
-            color: #666;
-            text-decoration: none;
-            padding: 8px 16px;
-            border: 1px solid #666;
-            border-radius: 4px;
-            transition: all 0.3s ease;
-            font-size: 14px;
-        }
-
-        .back-link:hover {
-            background: #f1f3f4;
-        }
-
-        .upload-section {
-            background: #ecf0f1;
-            padding: 20px;
-            border-radius: 5px;
-            margin-bottom: 30px;
-        }
-
-        .upload-form {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .file-drop-area {
-            padding: 30px;
-            border: 2px dashed #bdc3c7;
-            border-radius: 5px;
-            background: white;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            min-height: 120px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-        }
-
-        .file-drop-area:hover {
-            border-color: #666666;
-            background-color: #f8f9fa;
-        }
-
-        .file-drop-area.dragover {
-            border-color: #333333;
-            background-color: #e9ecef;
-        }
-
-        .file-drop-area input[type="file"] {
-            display: none;
-        }
-
-        .file-drop-text {
-            font-size: 14px;
-            color: #666;
-            margin-top: 5px;
-        }
-
-        .file-count {
-            font-size: 18px;
-            font-weight: bold;
-            color: #28a745;
-            margin-top: 10px;
-        }
-
-        .upload-note {
-            background: #fff3cd;
-            border: 1px solid #ffc107;
-            color: #856404;
-            padding: 10px;
-            border-radius: 4px;
-            font-size: 12px;
-            margin-bottom: 15px;
-        }
-
-        .upload-note strong {
-            color: #856404;
-        }
-
-        .format-info {
-            background: #d1ecf1;
-            border: 1px solid #bee5eb;
-            color: #0c5460;
-            padding: 10px;
-            border-radius: 4px;
-            font-size: 11px;
-            margin-bottom: 15px;
-        }
-
-        .file-list {
-            margin-top: 20px;
-            max-height: 200px;
-            overflow-y: auto;
-            background: #f8f9fa;
-            border-radius: 5px;
-            padding: 10px;
-        }
-
-        .file-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 12px;
-            margin: 5px 0;
-            background: white;
-            border-radius: 4px;
-            border: 1px solid #ddd;
-            font-size: 12px;
-        }
-
-        .file-item:hover {
-            background: #f1f3f4;
-        }
-
-        .file-name {
-            flex: 1;
-            text-align: left;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .file-size {
-            color: #666;
-            margin-left: 10px;
-            font-size: 11px;
-        }
-
-        .file-status {
-            margin-left: 10px;
-            padding: 3px 8px;
-            border-radius: 3px;
-            font-size: 10px;
-            text-transform: uppercase;
-        }
-
-        .status-pending {
-            background: #ffc107;
-            color: #333;
-        }
-
-        .status-processing {
-            background: #17a2b8;
-            color: white;
-        }
-
-        .status-success {
-            background: #28a745;
-            color: white;
-        }
-
-        .status-error {
-            background: #dc3545;
-            color: white;
-        }
-
-        .remove-file {
-            background: #dc3545;
-            color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 10px;
-            margin-left: 10px;
-        }
-
-        .remove-file:hover {
-            background: #c82333;
-        }
-
-        .upload-controls {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-
-        button {
-            background: #000000;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s;
-        }
-
-        button:hover {
-            background: #333333;
-        }
-
-        button:disabled {
-            background: #bdc3c7;
-            cursor: not-allowed;
-        }
-
-        .btn-clear {
-            background: #6c757d;
-        }
-
-        .btn-clear:hover {
-            background: #5a6268;
-        }
-
-        .status {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 5px;
-            display: none;
-        }
-
-        .status.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-
-        .upload-progress {
-            margin-top: 20px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 5px;
-            display: none;
-        }
-
-        .progress-title {
-            font-size: 14px;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
-
-        .progress-bar-container {
-            width: 100%;
-            height: 20px;
-            background: #ddd;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-
-        .progress-bar {
-            height: 100%;
-            background: #28a745;
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-
-        .progress-text {
-            margin-top: 10px;
-            font-size: 12px;
-            color: #666;
-        }
-
-        .records-section {
-            margin-top: 30px;
-        }
-
-        .records-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .records-controls {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-
-        .refresh-btn {
-            background: #000000;
-            font-size: 14px;
-            padding: 8px 16px;
-        }
-
-        .refresh-btn:hover {
-            background: #333333;
-        }
-
-        .export-btn {
-            background: #28a745;
-            font-size: 14px;
-            padding: 8px 16px;
-        }
-
-        .export-btn:hover {
-            background: #218838;
-        }
-
-        .clear-all-btn {
-            background: #dc3545;
-            font-size: 14px;
-            padding: 8px 16px;
-        }
-
-        .clear-all-btn:hover {
-            background: #c82333;
-        }
-
-        .stats-section {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }
-
-        .stat-card {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 6px;
-            text-align: center;
-            border: 1px solid #ddd;
-            position: relative;
-        }
-
-        .stat-number {
-            font-size: 24px;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 5px;
-        }
-
-        .stat-label {
-            color: #666;
-            font-size: 11px;
-        }
-
-        .loading-spinner {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #333;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .table-container {
-            overflow-x: auto;
-            margin-top: 20px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 10px;
-            min-width: 1400px;
-        }
-
-        th, td {
-            padding: 6px 8px;
-            text-align: left;
-            border-right: 1px solid #eee;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        th:last-child, td:last-child {
-            border-right: none;
-        }
-
-        th {
-            background-color: #34495e;
-            color: white;
-            font-weight: normal;
-            font-family: 'Courier', monospace;
-            font-size: 9px;
-            text-transform: uppercase;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
-        }
-
-        tr:hover {
-            background-color: #f5f5f5;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 20px;
-            color: #7f8c8d;
-        }
-
-        .no-records {
-            text-align: center;
-            padding: 40px;
-            color: #7f8c8d;
-            font-style: italic;
-            font-size: 12px;
-        }
-
-        .record-count {
-            color: #7f8c8d;
-            font-size: 14px;
-        }
-
-        .showing-info {
-            color: #666;
-            font-size: 13px;
-            margin-bottom: 10px;
-        }
-
-        .debug-section {
-            background: #d4edda;
-            border: 1px solid #c3e6cb;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }
-
-        .debug-output {
-            background: white;
-            padding: 10px;
-            margin-top: 10px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 11px;
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Gazelle Sales</h1>
-            <div class="header-right">
-                <span class="user-info">Logged in as: <strong id="currentUserName">User</strong></span>
-                <button class="btn-logout" onclick="logout()">Logout</button>
-                <a href="/data-upload" class="back-link">← Back to Data Upload</a>
-            </div>
-        </div>
-        
-        <!-- Upload Section -->
-        <div class="upload-section">
-            <h2>Upload Gazelle Sales Data</h2>
-            
-            <!-- Note about file processing -->
-            <div class="upload-note">
-                <strong>Note:</strong> The system will automatically detect your file format and map columns appropriately.
-            </div>
-            
-            <!-- Format information -->
-            <div class="format-info">
-                <strong>Expected Columns:</strong> Date | Cus | Cus No | Name | Invoice | Title | Imprint | Book EAN | Quantity | TOTAL | Carrier | Tracking
-            </div>
-            
-            <form id="uploadForm" class="upload-form">
-                <div class="file-drop-area" id="fileDropArea">
-                    <div>📁 Drop Excel files here or click to browse</div>
-                    <div class="file-drop-text">Supports .xls and .xlsx files</div>
-                    <div class="file-count" id="fileCount" style="display: none;"></div>
-                    <input type="file" id="fileInput" accept=".xls,.xlsx" multiple>
-                </div>
-                
-                <div id="fileList" class="file-list" style="display: none;"></div>
-                
-                <div class="upload-controls">
-                    <button type="submit" id="uploadBtn">Upload & Process Files</button>
-                    <button type="button" id="clearBtn" class="btn-clear" style="display: none;">Clear All Files</button>
-                </div>
-                
-                <div id="uploadProgress" class="upload-progress">
-                    <div class="progress-title">Processing Files...</div>
-                    <div class="progress-bar-container">
-                        <div class="progress-bar" id="progressBar"></div>
-                    </div>
-                    <div class="progress-text" id="progressText">Processing file 0 of 0...</div>
-                </div>
-            </form>
-            <div id="status" class="status"></div>
-        </div>
-
-        <!-- Debug Section -->
-        <div class="debug-section">
-            <h3 style="margin-top: 0;">Debug Tools</h3>
-            <p style="font-size: 12px; margin: 10px 0;">Use these tools to test file parsing and uploads directly.</p>
-            
-            <input type="file" id="directFileInput" accept=".xls,.xlsx" style="margin: 10px 0;">
-            
-            <div style="margin: 10px 0;">
-                <button onclick="testDirectParse()" style="background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
-                    Test Parse This File
-                </button>
-                
-                <button onclick="testDirectUpload()" style="background: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
-                    Upload This File to Gazelle
-                </button>
-                
-                <button onclick="clearAllRecords()" style="background: #dc3545; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
-                    Clear All Records
-                </button>
-            </div>
-            
-            <div id="directTestOutput" class="debug-output" style="display: none;"></div>
-        </div>
-
-        <!-- Statistics Section -->
-        <div class="stats-section">
-            <div class="stat-card">
-                <div class="stat-number" id="totalRecords">0</div>
-                <div class="stat-label">Total Records</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="uniqueOrders">0</div>
-                <div class="stat-label">Unique Orders</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="totalQuantity">0</div>
-                <div class="stat-label">Total Quantity</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="totalRevenue">£0</div>
-                <div class="stat-label">Total Revenue</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="uniqueCustomers">0</div>
-                <div class="stat-label">Unique Customers</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="uniqueTitles">0</div>
-                <div class="stat-label">Unique Titles</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="newRecords">0</div>
-                <div class="stat-label">New Records Added</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="duplicatesSkipped">0</div>
-                <div class="stat-label">Duplicates Skipped</div>
-            </div>
-        </div>
-
-        <!-- Records Section -->
-        <div class="records-section">
-            <div class="records-header">
-                <h2>Gazelle Sales Records</h2>
-                <div class="records-controls">
-                    <span id="recordCount" class="record-count"></span>
-                    <button id="exportBtn" class="export-btn">Export to CSV</button>
-                    <button id="refreshBtn" class="refresh-btn">Refresh Data</button>
-                </div>
-            </div>
-            
-            <div class="showing-info" id="showingInfo">Showing all records (no pagination)</div>
-            
-            <div class="table-container">
-                <div id="recordsContainer">
-                    <div class="loading">Loading records...</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // Display current user
-        if (window.currentUser) {
-            document.getElementById('currentUserName').textContent = window.currentUser.username;
-        }
-        
-        // DOM elements
-        const uploadForm = document.getElementById('uploadForm');
-        const fileInput = document.getElementById('fileInput');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const clearBtn = document.getElementById('clearBtn');
-        const status = document.getElementById('status');
-        const fileDropArea = document.getElementById('fileDropArea');
-        const fileCount = document.getElementById('fileCount');
-        const fileList = document.getElementById('fileList');
-        const uploadProgress = document.getElementById('uploadProgress');
-        const progressBar = document.getElementById('progressBar');
-        const progressText = document.getElementById('progressText');
-        const recordsContainer = document.getElementById('recordsContainer');
-        const refreshBtn = document.getElementById('refreshBtn');
-        const exportBtn = document.getElementById('exportBtn');
-        const recordCount = document.getElementById('recordCount');
-        const showingInfo = document.getElementById('showingInfo');
-        
-        // Stats elements
-        const totalRecordsEl = document.getElementById('totalRecords');
-        const uniqueOrdersEl = document.getElementById('uniqueOrders');
-        const totalQuantityEl = document.getElementById('totalQuantity');
-        const totalRevenueEl = document.getElementById('totalRevenue');
-        const uniqueCustomersEl = document.getElementById('uniqueCustomers');
-        const uniqueTitlesEl = document.getElementById('uniqueTitles');
-        const newRecordsEl = document.getElementById('newRecords');
-        const duplicatesSkippedEl = document.getElementById('duplicatesSkipped');
-
-        let selectedFiles = [];
-        let gazelleRecords = [];
-
-        // Make selectedFiles globally accessible for debugging
-        window.selectedFiles = selectedFiles;
-
-        // Drag and drop functionality
-        fileDropArea.addEventListener('click', () => {
-            const input = document.getElementById('fileInput');
-            if (input) {
-                input.click();
-            }
-        });
-
-        fileDropArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            fileDropArea.classList.add('dragover');
-        });
-
-        fileDropArea.addEventListener('dragleave', () => {
-            fileDropArea.classList.remove('dragover');
-        });
-
-        fileDropArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            fileDropArea.classList.remove('dragover');
-            
-            const files = e.dataTransfer.files;
-            handleFileSelection(files);
-        });
-
-        // File input change handler
-        fileInput.addEventListener('change', (e) => {
-            handleFileSelection(e.target.files);
-        });
-
-        // Clear button handler
-        clearBtn.addEventListener('click', () => {
-            clearFileSelection();
-        });
-
-        // Refresh button handler
-        refreshBtn.addEventListener('click', () => {
-            loadRecords();
-            loadStats();
-        });
-
-        // Export button handler
-        exportBtn.addEventListener('click', () => {
-            exportToCSV();
-        });
-
-        // Handle file selection
-        function handleFileSelection(files) {
-            selectedFiles = [];
-            
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                if (file.name.match(/\.(xlsx|xls)$/i)) {
-                    selectedFiles.push({
-                        file: file,
-                        status: 'pending',
-                        message: ''
-                    });
-                }
-            }
-            
-            // Update global reference
-            window.selectedFiles = selectedFiles;
-            
-            if (selectedFiles.length === 0) {
-                showStatus('Please select valid Excel files (.xls, .xlsx)', 'error');
-                return;
-            }
-            
-            console.log('Files selected:', selectedFiles.length, selectedFiles.map(f => f.file.name));
-            updateFileDisplay();
-        }
-
-        // Clear file selection
-        function clearFileSelection() {
-            selectedFiles = [];
-            window.selectedFiles = selectedFiles;
-            
-            const input = document.getElementById('fileInput');
-            if (input) {
-                input.value = '';
-            }
-            
-            updateFileDisplay();
-            uploadProgress.style.display = 'none';
-        }
-
-        // Update file display
-        function updateFileDisplay() {
-            if (selectedFiles.length === 0) {
-                fileCount.style.display = 'none';
-                fileList.style.display = 'none';
-                clearBtn.style.display = 'none';
-                
-                // Reset display without recreating input
-                const dropText = fileDropArea.querySelector('div');
-                if (dropText) {
-                    dropText.innerHTML = '📁 Drop Excel files here or click to browse';
-                }
-            } else {
-                fileCount.textContent = `${selectedFiles.length} file(s) selected`;
-                fileCount.style.display = 'block';
-                clearBtn.style.display = 'block';
-                
-                // Update file list
-                fileList.innerHTML = '';
-                selectedFiles.forEach((fileInfo, index) => {
-                    const fileItem = document.createElement('div');
-                    fileItem.className = 'file-item';
-                    
-                    const fileName = document.createElement('div');
-                    fileName.className = 'file-name';
-                    fileName.textContent = fileInfo.file.name;
-                    
-                    const fileSize = document.createElement('span');
-                    fileSize.className = 'file-size';
-                    fileSize.textContent = formatFileSize(fileInfo.file.size);
-                    
-                    const fileStatus = document.createElement('span');
-                    fileStatus.className = `file-status status-${fileInfo.status}`;
-                    fileStatus.textContent = fileInfo.status;
-                    
-                    const removeBtn = document.createElement('button');
-                    removeBtn.className = 'remove-file';
-                    removeBtn.textContent = '×';
-                    removeBtn.onclick = () => removeFile(index);
-                    
-                    fileItem.appendChild(fileName);
-                    fileItem.appendChild(fileSize);
-                    fileItem.appendChild(fileStatus);
-                    if (fileInfo.status === 'pending') {
-                        fileItem.appendChild(removeBtn);
+                // Map columns based on your specification
+                // Note: Excel columns are 0-indexed in the array
+                const recordData = {
+                    order_date: row[0] || null, // Column A - Date
+                    customer_code: row[1] || '', // Column B - Cus
+                    customer_number: row[2] || '', // Column C - Cus No
+                    customer_name: row[3] || '', // Column D - Name
+                    invoice: row[4] || '', // Column E - Invoice
+                    title: row[5] || '', // Column F - Title
+                    imprint: row[6] || '', // Column G - Imprint
+                    isbn13: row[7] || '', // Column H - Book EAN
+                    quantity: parseInt(row[8]) || 0, // Column I - Quantity
+                    total_amount: parseFloat(row[9]) || 0, // Column J - TOTAL
+                    carrier: row[10] || '', // Column K - Carrier
+                    tracking: row[11] || '', // Column L - Tracking
+                    file_name: req.file.originalname
+                };
+
+                // Parse date if it exists
+                if (recordData.order_date) {
+                    // Handle Excel serial dates
+                    if (!isNaN(recordData.order_date)) {
+                        const excelDate = parseInt(recordData.order_date);
+                        const date = new Date((excelDate - 25569) * 86400 * 1000);
+                        recordData.order_date = date.toISOString().split('T')[0];
+                    } else if (recordData.order_date.includes('/')) {
+                        // Handle date strings like "19/09/2025"
+                        const parts = recordData.order_date.split('/');
+                        if (parts.length === 3) {
+                            recordData.order_date = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                        }
                     }
-                    
-                    fileList.appendChild(fileItem);
-                });
-                
-                fileList.style.display = 'block';
-            }
-        }
-
-        // Remove individual file
-        function removeFile(index) {
-            selectedFiles.splice(index, 1);
-            window.selectedFiles = selectedFiles;
-            updateFileDisplay();
-        }
-
-        // Format file size
-        function formatFileSize(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-        }
-
-        // Upload form handler
-        uploadForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            if (selectedFiles.length === 0) {
-                showStatus('Please select files to upload', 'error');
-                return;
-            }
-
-            uploadBtn.disabled = true;
-            clearBtn.disabled = true;
-            uploadProgress.style.display = 'block';
-            status.style.display = 'none';
-            
-            let successCount = 0;
-            let errorCount = 0;
-            let totalNewRecords = 0;
-            let totalDuplicates = 0;
-
-            for (let i = 0; i < selectedFiles.length; i++) {
-                const fileInfo = selectedFiles[i];
-                
-                // Update progress
-                progressBar.style.width = `${((i + 1) / selectedFiles.length) * 100}%`;
-                progressText.textContent = `Processing file ${i + 1} of ${selectedFiles.length}: ${fileInfo.file.name}`;
-                
-                // Update file status
-                fileInfo.status = 'processing';
-                updateFileDisplay();
-                
-                const formData = new FormData();
-                formData.append('gazelleFile', fileInfo.file);
-
-                try {
-                    const response = await fetch('/api/gazelle/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    const result = await response.json();
-
-                    if (response.ok) {
-                        fileInfo.status = 'success';
-                        fileInfo.message = result.message;
-                        successCount++;
-                        totalNewRecords += result.newRecords || 0;
-                        totalDuplicates += result.duplicates || 0;
-                        
-                        // Update stats
-                        newRecordsEl.textContent = totalNewRecords;
-                        duplicatesSkippedEl.textContent = totalDuplicates;
-                        
-                        console.log('Upload successful:', result);
-                    } else {
-                        fileInfo.status = 'error';
-                        fileInfo.message = result.error || 'Upload failed';
-                        errorCount++;
-                        console.error('Upload failed:', result);
-                    }
-                } catch (error) {
-                    fileInfo.status = 'error';
-                    fileInfo.message = 'Network error: ' + error.message;
-                    errorCount++;
-                    console.error('Network error:', error);
                 }
-                
-                updateFileDisplay();
-            }
-            
-            // Show final status
-            progressBar.style.width = '100%';
-            progressText.textContent = 'Processing complete!';
-            
-            let statusMessage = `Processed ${selectedFiles.length} file(s): ${successCount} successful`;
-            if (errorCount > 0) {
-                statusMessage += `, ${errorCount} failed`;
-            }
-            statusMessage += `. ${totalNewRecords} new records added`;
-            if (totalDuplicates > 0) {
-                statusMessage += `, ${totalDuplicates} duplicates updated`;
-            }
-            
-            showStatus(statusMessage, errorCount === 0 ? 'success' : 'error');
-            
-            uploadBtn.disabled = false;
-            clearBtn.disabled = false;
-            
-            // Refresh data
-            loadRecords();
-            loadStats();
-            
-            // Auto-clear after successful upload
-            if (errorCount === 0) {
-                setTimeout(() => {
-                    clearFileSelection();
-                }, 3000);
-            }
-        });
 
-        // Show status message
-        function showStatus(message, type) {
-            status.textContent = message;
-            status.className = `status ${type}`;
-            status.style.display = 'block';
-            
-            // Hide status after 5 seconds for success messages
-            if (type === 'success') {
-                setTimeout(() => {
-                    status.style.display = 'none';
-                }, 5000);
-            }
-        }
+                // Calculate unit price if we have quantity and total
+                if (recordData.quantity > 0 && recordData.total_amount > 0) {
+                    recordData.unit_price = recordData.total_amount / recordData.quantity;
+                } else {
+                    recordData.unit_price = recordData.total_amount;
+                }
 
-        // Load and display ALL records (no pagination)
-        async function loadRecords() {
-            try {
-                recordsContainer.innerHTML = '<div class="loading">Loading records...</div>';
-                
-                // Fetch ALL records - no pagination
-                const response = await fetch('/api/gazelle/records?limit=999999');
-                const data = await response.json();
-                
-                gazelleRecords = data.records || [];
-                
-                console.log(`Loaded ${gazelleRecords.length} Gazelle records`);
-                
-                displayRecords();
-                
-            } catch (error) {
-                console.error('Error loading records:', error);
-                recordsContainer.innerHTML = '<div class="no-records">Error loading records: ' + error.message + '</div>';
-                recordCount.textContent = '';
-            }
-        }
+                // Generate order reference from invoice if needed
+                recordData.order_ref = recordData.invoice || `ORD-${Date.now()}`;
 
-        // Display records
-        function displayRecords() {
-            if (gazelleRecords.length === 0) {
-                recordsContainer.innerHTML = '<div class="no-records">No Gazelle Sales records found. Upload Excel files to get started!</div>';
-                recordCount.textContent = '';
-                showingInfo.textContent = 'No records to display';
-                return;
-            }
+                // Apply customer name mappings
+                const mappingResult = await pool.query(
+                    'SELECT display_name FROM customer_name_mappings WHERE original_name = $1',
+                    [recordData.customer_name]
+                );
 
-            recordCount.textContent = `Total: ${gazelleRecords.length} record${gazelleRecords.length !== 1 ? 's' : ''}`;
-            showingInfo.textContent = `Showing all ${gazelleRecords.length} records (no pagination)`;
+                if (mappingResult.rows.length > 0) {
+                    recordData.customer_name = mappingResult.rows[0].display_name;
+                }
 
-            // Create table with all the Gazelle columns
-            const table = document.createElement('table');
-            table.innerHTML = `
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Order Ref</th>
-                        <th>Order Date</th>
-                        <th>Customer Name</th>
-                        <th>City</th>
-                        <th>Country</th>
-                        <th>Title</th>
-                        <th>ISBN13</th>
-                        <th>Quantity</th>
-                        <th>Unit Price</th>
-                        <th>Discount</th>
-                        <th>Publisher</th>
-                        <th>Format</th>
-                        <th>Upload Date</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${gazelleRecords.map((record, index) => `
-                        <tr>
-                            <td>${index + 1}</td>
-                            <td>${record.order_ref || '-'}</td>
-                            <td>${record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '-'}</td>
-                            <td>${record.customer_name || '-'}</td>
-                            <td>${record.city || '-'}</td>
-                            <td>${record.country || '-'}</td>
-                            <td>${record.title || '-'}</td>
-                            <td>${record.isbn13 || '-'}</td>
-                            <td>${record.quantity || 0}</td>
-                            <td>${record.unit_price ? '£' + parseFloat(record.unit_price).toFixed(2) : '-'}</td>
-                            <td>${record.discount ? record.discount + '%' : '0%'}</td>
-                            <td>${record.publisher || '-'}</td>
-                            <td>${record.format || '-'}</td>
-                            <td>${record.upload_date ? new Date(record.upload_date).toLocaleDateString('en-GB') : '-'}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            `;
+                // Insert or update the record
+                const insertQuery = `
+                    INSERT INTO gazelle_sales (
+                        order_ref, order_date, customer_code, customer_number,
+                        customer_name, invoice, title, imprint, isbn13,
+                        quantity, unit_price, total_amount, carrier, tracking,
+                        file_name, upload_date
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)
+                    ON CONFLICT (order_ref, invoice, isbn13) 
+                    DO UPDATE SET
+                        quantity = EXCLUDED.quantity,
+                        unit_price = EXCLUDED.unit_price,
+                        total_amount = EXCLUDED.total_amount,
+                        upload_date = CURRENT_TIMESTAMP
+                    RETURNING id
+                `;
 
-            recordsContainer.innerHTML = '';
-            recordsContainer.appendChild(table);
-        }
-
-        // Load statistics
-        async function loadStats() {
-            try {
-                const response = await fetch('/api/gazelle/stats');
-                const stats = await response.json();
-                
-                // Update the display elements
-                totalRecordsEl.textContent = (stats.totalRecords || 0).toLocaleString();
-                uniqueOrdersEl.textContent = (stats.uniqueOrders || 0).toLocaleString();
-                totalQuantityEl.textContent = (stats.totalQuantity || 0).toLocaleString();
-                totalRevenueEl.textContent = '£' + (stats.totalRevenue || 0).toFixed(2);
-                uniqueCustomersEl.textContent = (stats.uniqueCustomers || 0).toLocaleString();
-                uniqueTitlesEl.textContent = (stats.uniqueTitles || 0).toLocaleString();
-                
-                console.log('Stats loaded:', stats);
-                
-            } catch (error) {
-                console.error('Error loading stats:', error);
-            }
-        }
-
-        // Export to CSV function
-        function exportToCSV() {
-            if (gazelleRecords.length === 0) {
-                showStatus('No data to export', 'error');
-                return;
-            }
-
-            // Define CSV headers
-            const headers = [
-                'Order Ref', 'Order Date', 'Customer Name', 'City', 'Country',
-                'Title', 'ISBN13', 'Quantity', 'Unit Price', 'Discount',
-                'Publisher', 'Format', 'Upload Date'
-            ];
-
-            // Create CSV content
-            let csvContent = headers.join(',') + '\n';
-
-            gazelleRecords.forEach(record => {
-                const row = [
-                    record.order_ref || '',
-                    record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '',
-                    `"${(record.customer_name || '').replace(/"/g, '""')}"`,
-                    `"${(record.city || '').replace(/"/g, '""')}"`,
-                    record.country || '',
-                    `"${(record.title || '').replace(/"/g, '""')}"`,
-                    record.isbn13 || '',
-                    record.quantity || 0,
-                    record.unit_price || 0,
-                    record.discount || 0,
-                    `"${(record.publisher || '').replace(/"/g, '""')}"`,
-                    record.format || '',
-                    record.upload_date ? new Date(record.upload_date).toLocaleDateString('en-GB') : ''
+                const values = [
+                    recordData.order_ref,
+                    recordData.order_date,
+                    recordData.customer_code,
+                    recordData.customer_number,
+                    recordData.customer_name,
+                    recordData.invoice,
+                    recordData.title,
+                    recordData.imprint,
+                    recordData.isbn13,
+                    recordData.quantity,
+                    recordData.unit_price,
+                    recordData.total_amount,
+                    recordData.carrier,
+                    recordData.tracking,
+                    recordData.file_name
                 ];
-                csvContent += row.join(',') + '\n';
-            });
 
-            // Create blob and download
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', `gazelle_sales_export_${new Date().toISOString().split('T')[0]}.csv`);
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+                await pool.query(insertQuery, values);
+                newRecords++;
 
-            showStatus('Data exported successfully', 'success');
-        }
-
-        // Debug functions
-        async function testDirectParse() {
-            const fileInput = document.getElementById('directFileInput');
-            const output = document.getElementById('directTestOutput');
-            
-            if (!fileInput.files || fileInput.files.length === 0) {
-                alert('Please select a file using the file input above');
-                return;
-            }
-            
-            const file = fileInput.files[0];
-            const formData = new FormData();
-            formData.append('testFile', file);
-            
-            output.style.display = 'block';
-            output.innerHTML = 'Testing file: ' + file.name + '...<br><br>';
-            
-            try {
-                const response = await fetch('/api/test-gazelle-parse', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                output.innerHTML += '<strong>Parse Results:</strong><br>';
-                output.innerHTML += 'Total Raw Rows: ' + data.rawRowCount + '<br>';
-                output.innerHTML += 'Method 1 rows: ' + data.method1Count + '<br>';
-                output.innerHTML += 'Method 2 rows (skip first row): ' + data.method2Count + '<br><br>';
-                
-                output.innerHTML += '<strong>First 5 Raw Rows:</strong><br>';
-                output.innerHTML += '<pre>' + JSON.stringify(data.firstRawRows, null, 2) + '</pre><br>';
-                
-                output.innerHTML += '<strong>Parsed Data Sample (Method 2 - Your Format):</strong><br>';
-                output.innerHTML += '<pre>' + JSON.stringify(data.method2Sample, null, 2) + '</pre>';
-                
-                // Check column structure
-                if (data.method2Sample && data.method2Sample.length > 0) {
-                    const columns = Object.keys(data.method2Sample[0]);
-                    output.innerHTML += '<br><strong>Detected Columns:</strong><br>';
-                    output.innerHTML += columns.join(', ');
-                    
-                    // Check if it's the Antenne format
-                    if (columns.includes('Date') && columns.includes('Cus') && columns.includes('Invoice')) {
-                        output.innerHTML += '<br><br><strong style="color: green;">✓ Antenne format detected!</strong>';
-                    } else {
-                        output.innerHTML += '<br><br><strong style="color: orange;">⚠ Unknown format - may need adjustment</strong>';
-                    }
-                }
-                
-                // Store for debugging
-                window.lastParseResult = data;
-                console.log('Parse result stored in window.lastParseResult', data);
-                
-            } catch (error) {
-                output.innerHTML += '<strong style="color: red;">Error:</strong> ' + error.message;
+            } catch (recordError) {
+                console.error('Error processing record:', recordError);
+                errors++;
             }
         }
 
-        async function testDirectUpload() {
-            const fileInput = document.getElementById('directFileInput');
-            const output = document.getElementById('directTestOutput');
-            
-            if (!fileInput.files || fileInput.files.length === 0) {
-                alert('Please select a file using the file input above');
-                return;
-            }
-            
-            const file = fileInput.files[0];
-            const formData = new FormData();
-            formData.append('gazelleFile', file);
-            
-            output.style.display = 'block';
-            output.innerHTML = 'Uploading file: ' + file.name + '...<br><br>';
-            
-            try {
-                const response = await fetch('/api/gazelle/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                console.log('Direct upload response:', data);
-                
-                if (data.success) {
-                    output.innerHTML += '<strong style="color: green;">Success!</strong><br>';
-                    output.innerHTML += 'Message: ' + data.message + '<br>';
-                    output.innerHTML += 'New Records: ' + (data.newRecords || 0) + '<br>';
-                    output.innerHTML += 'Duplicates: ' + (data.duplicates || 0) + '<br>';
-                    output.innerHTML += 'Errors: ' + (data.errors || 0) + '<br><br>';
-                    
-                    if (data.details) {
-                        output.innerHTML += '<strong>Details:</strong><br>';
-                        output.innerHTML += '<pre>' + JSON.stringify(data.details, null, 2) + '</pre>';
-                    }
-                    
-                    // Refresh the page data
-                    loadRecords();
-                    loadStats();
-                } else {
-                    output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
-                    output.innerHTML += 'Error: ' + (data.error || 'Unknown error') + '<br>';
-                    if (data.details) {
-                        output.innerHTML += '<pre>' + data.details + '</pre>';
-                    }
-                }
-                
-            } catch (error) {
-                output.innerHTML += '<strong style="color: red;">Network Error:</strong> ' + error.message;
-                console.error('Direct upload error:', error);
-            }
-        }
+        // Clean up uploaded file
+        fs.unlinkSync(req.file.path);
 
-        async function clearAllRecords() {
-            if (!confirm('Are you sure you want to DELETE ALL Gazelle records? This cannot be undone!')) {
-                return;
-            }
-            
-            const output = document.getElementById('directTestOutput');
-            output.style.display = 'block';
-            output.innerHTML = 'Clearing all records...<br>';
-            
-            try {
-                const response = await fetch('/api/clear-data', {
-                    method: 'DELETE'
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    output.innerHTML += '<strong style="color: green;">Success!</strong><br>';
-                    output.innerHTML += data.message + '<br>';
-                    output.innerHTML += 'Deleted ' + data.deletedCount + ' records<br>';
-                    
-                    // Refresh the page
-                    loadRecords();
-                    loadStats();
-                } else {
-                    output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
-                    output.innerHTML += 'Error: ' + (data.error || 'Unknown error');
-                }
-            } catch (error) {
-                output.innerHTML += '<strong style="color: red;">Error:</strong> ' + error.message;
-            }
-        }
+        console.log(`Upload complete: ${newRecords} new, ${duplicates} duplicates, ${errors} errors`);
 
-        // Initialize on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            console.log('Gazelle Sales page loaded');
-            console.log('Ready to process Antenne format Excel files');
-            loadRecords();
-            loadStats();
+        res.json({
+            success: true,
+            message: `Successfully processed ${req.file.originalname}`,
+            newRecords,
+            duplicates,
+            errors
         });
-    </script>
-</body>
-</html>
+
+    } catch (error) {
+        console.error('Gazelle upload error:', error);
+        
+        // Clean up file on error
+        if (req.file && req.file.path) {
+            try {
+                fs.unlinkSync(req.file.path);
+            } catch (unlinkError) {
+                console.error('Error deleting file:', unlinkError);
+            }
+        }
+        
+        res.status(500).json({ 
+            error: 'Failed to process file',
+            details: error.message 
+        });
+    }
+});
+
+// Test parse endpoint for debugging
+app.post('/api/test-gazelle-parse', upload.single('testFile'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Get raw data
+        const rawData = XLSX.utils.sheet_to_json(worksheet, { 
+            header: 1,
+            defval: '',
+            raw: false
+        });
+
+        // Parse with headers on row 2
+        const headers = rawData[1];
+        const dataRows = rawData.slice(2);
+        
+        const parsedSample = dataRows.slice(0, 5).map(row => {
+            return {
+                Date: row[0],
+                Cus: row[1],
+                'Cus No': row[2],
+                Name: row[3],
+                Invoice: row[4],
+                Title: row[5],
+                Imprint: row[6],
+                'Book EAN': row[7],
+                Quantity: row[8],
+                TOTAL: row[9],
+                Carrier: row[10],
+                Tracking: row[11]
+            };
+        });
+
+        fs.unlinkSync(req.file.path);
+
+        res.json({
+            rawRowCount: rawData.length,
+            headers: headers,
+            firstRawRows: rawData.slice(0, 5),
+            method2Count: dataRows.length,
+            method2Sample: parsedSample
+        });
+
+    } catch (error) {
+        if (req.file && req.file.path) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get Gazelle records
+app.get('/api/gazelle/records', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 1000;
+        const offset = parseInt(req.query.offset) || 0;
+        
+        const result = await pool.query(
+            'SELECT * FROM gazelle_sales ORDER BY upload_date DESC, id DESC LIMIT $1 OFFSET $2',
+            [limit, offset]
+        );
+        
+        const countResult = await pool.query('SELECT COUNT(*) FROM gazelle_sales');
+        
+        res.json({
+            records: result.rows,
+            totalRecords: parseInt(countResult.rows[0].count)
+        });
+    } catch (error) {
+        console.error('Error fetching Gazelle records:', error);
+        res.status(500).json({ error: 'Failed to fetch records' });
+    }
+});
+
+// Get Gazelle statistics
+app.get('/api/gazelle/stats', async (req, res) => {
+    try {
+        const stats = await pool.query(`
+            SELECT 
+                COUNT(*) as total_records,
+                COUNT(DISTINCT order_ref) as unique_orders,
+                SUM(quantity) as total_quantity,
+                SUM(total_amount) as total_revenue,
+                COUNT(DISTINCT customer_name) as unique_customers,
+                COUNT(DISTINCT title) as unique_titles
+            FROM gazelle_sales
+        `);
+        
+        res.json({
+            totalRecords: parseInt(stats.rows[0].total_records),
+            uniqueOrders: parseInt(stats.rows[0].unique_orders),
+            totalQuantity: parseInt(stats.rows[0].total_quantity) || 0,
+            totalRevenue: parseFloat(stats.rows[0].total_revenue) || 0,
+            uniqueCustomers: parseInt(stats.rows[0].unique_customers),
+            uniqueTitles: parseInt(stats.rows[0].unique_titles)
+        });
+    } catch (error) {
+        console.error('Error fetching stats:', error);
+        res.status(500).json({ error: 'Failed to fetch statistics' });
+    }
+});
+
+// Booksonix upload endpoint
+app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        const data = XLSX.utils.sheet_to_json(worksheet);
+        
+        let newRecords = 0;
+        let duplicates = 0;
+
+        for (const row of data) {
+            const sku = row.SKU || row.sku || row['SKU'] || '';
+            const cleanedSKU = sku.toString().replace(/-/g, '');
+            
+            if (!cleanedSKU) continue;
+            
+            try {
+                await pool.query(
+                    `INSERT INTO booksonix (sku, isbn, title, publisher, price)
+                     VALUES ($1, $2, $3, $4, $5)
+                     ON CONFLICT (sku) DO NOTHING`,
+                    [
+                        cleanedSKU,
+                        row.ISBN || row.isbn || '',
+                        row.Title || row.title || '',
+                        row.Publisher || row.publisher || '',
+                        parseFloat(row.Price || row.price || 0)
+                    ]
+                );
+                newRecords++;
+            } catch (err) {
+                if (err.code === '23505') {
+                    duplicates++;
+                } else {
+                    throw err;
+                }
+            }
+        }
+        
+        fs.unlinkSync(req.file.path);
+        
+        res.json({
+            success: true,
+            message: `Processed ${req.file.originalname}`,
+            newRecords,
+            duplicates
+        });
+    } catch (error) {
+        if (req.file && req.file.path) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get Booksonix records
+app.get('/api/booksonix/records', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 500;
+        const offset = (page - 1) * limit;
+        
+        const result = await pool.query(
+            'SELECT * FROM booksonix ORDER BY upload_date DESC LIMIT $1 OFFSET $2',
+            [limit, offset]
+        );
+        
+        const countResult = await pool.query('SELECT COUNT(*) FROM booksonix');
+        
+        res.json({
+            records: result.rows,
+            totalRecords: parseInt(countResult.rows[0].count)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get Booksonix statistics
+app.get('/api/booksonix/stats', async (req, res) => {
+    try {
+        const stats = await pool.query(`
+            SELECT 
+                COUNT(*) as total_records,
+                COUNT(DISTINCT sku) as unique_skus,
+                COUNT(DISTINCT isbn) as unique_isbns
+            FROM booksonix
+        `);
+        
+        res.json({
+            totalRecords: parseInt(stats.rows[0].total_records),
+            uniqueSKUs: parseInt(stats.rows[0].unique_skus),
+            uniqueISBNs: parseInt(stats.rows[0].unique_isbns)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Clear data endpoint
+app.delete('/api/clear-data', async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM gazelle_sales');
+        res.json({ 
+            success: true,
+            message: 'All Gazelle records cleared',
+            deletedCount: result.rowCount
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Clear Booksonix data
+app.delete('/api/clear-booksonix', async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM booksonix');
+        res.json({ 
+            success: true,
+            message: 'All Booksonix records cleared',
+            deletedCount: result.rowCount
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get titles for reports
+app.get('/api/titles', async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT DISTINCT title FROM gazelle_sales WHERE title IS NOT NULL ORDER BY title'
+        );
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generate report endpoint
+app.post('/api/generate-report', async (req, res) => {
+    try {
+        const { publisher, startDate, endDate, titles } = req.body;
+        
+        const query = `
+            SELECT DISTINCT
+                customer_name,
+                MAX(customer_code) as customer_code,
+                MAX(city) as city,
+                MAX(country) as country,
+                COUNT(DISTINCT order_ref) as total_orders,
+                SUM(quantity) as total_quantity,
+                MAX(order_date) as last_order
+            FROM gazelle_sales
+            WHERE title = ANY($1)
+            AND order_date >= $2
+            AND order_date <= $3
+            GROUP BY customer_name
+            ORDER BY country, city, customer_name
+        `;
+        
+        const result = await pool.query(query, [titles, startDate, endDate]);
+        
+        res.json({
+            success: true,
+            data: result.rows,
+            totalCustomers: result.rows.length
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Customer name mappings
+app.get('/api/mappings', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM customer_name_mappings ORDER BY original_name');
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/mappings', async (req, res) => {
+    try {
+        const { original_name, display_name } = req.body;
+        await pool.query(
+            'INSERT INTO customer_name_mappings (original_name, display_name) VALUES ($1, $2)',
+            [original_name, display_name]
+        );
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/mappings/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM customer_name_mappings WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// User management
+app.get('/api/users', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT id, username, email, role, created_at FROM users ORDER BY username');
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/users', async (req, res) => {
+    try {
+        const { username, password, email, role } = req.body;
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        await pool.query(
+            'INSERT INTO users (username, password, email, role) VALUES ($1, $2, $3, $4)',
+            [username, hashedPassword, email, role]
+        );
+        
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Default route
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Start server
+app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
