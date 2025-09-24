@@ -1,2002 +1,1322 @@
-const express = require('express');
-const { Pool } = require('pg');
-const multer = require('multer');
-const xlsx = require('xlsx');
-const fs = require('fs');
-const path = require('path');
-const bcrypt = require('bcryptjs');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// PostgreSQL connection
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
-
-// Test database connection
-pool.connect((err, client, release) => {
-    if (err) {
-        console.error('Error connecting to database:', err.stack);
-    } else {
-        console.log('Connected to PostgreSQL database');
-        release();
-    }
-});
-
-// Middleware
-app.use(express.static('public'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Configure multer for file uploads
-const upload = multer({ dest: 'uploads/' });
-
-// Initialize Booksonix table
-async function initBooksonixTable() {
-    try {
-        // Check if the table exists
-        const tableCheck = await pool.query(`
-            SELECT column_name, data_type, is_nullable, column_default
-            FROM information_schema.columns
-            WHERE table_name = 'booksonix_records'
-            ORDER BY ordinal_position;
-        `);
-        
-        if (tableCheck.rows.length === 0) {
-            // Create table with SKU-based structure
-            console.log('Creating new Booksonix table with SKU-based structure...');
-            await pool.query(`
-                CREATE TABLE booksonix_records (
-                    id SERIAL PRIMARY KEY,
-                    sku VARCHAR(100) UNIQUE NOT NULL,
-                    isbn VARCHAR(50),
-                    title VARCHAR(500),
-                    author VARCHAR(500),
-                    publisher VARCHAR(500),
-                    price DECIMAL(10,2),
-                    quantity INTEGER DEFAULT 0,
-                    format VARCHAR(100),
-                    publication_date DATE,
-                    description TEXT,
-                    category VARCHAR(200),
-                    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gazelle Sales - Antenne Books</title>
+    
+    <!-- Authentication Check Script -->
+    <script>
+        // Authentication check for protected pages
+        (function() {
+            // Check authentication
+            const session = localStorage.getItem('userSession');
             
-            // Create indexes
-            await pool.query(`CREATE INDEX IF NOT EXISTS idx_booksonix_sku ON booksonix_records(sku)`);
-            await pool.query(`CREATE INDEX IF NOT EXISTS idx_booksonix_isbn ON booksonix_records(isbn)`);
-            
-            console.log('Booksonix table created successfully');
-        } else {
-            // Table exists, ensure it has the correct structure
-            const hasSkuColumn = tableCheck.rows.some(row => row.column_name === 'sku');
-            
-            if (!hasSkuColumn) {
-                console.log('Migrating Booksonix table to SKU-based structure...');
-                
-                // Add SKU column
-                await pool.query(`ALTER TABLE booksonix_records ADD COLUMN IF NOT EXISTS sku VARCHAR(100)`);
-                
-                // Copy ISBN to SKU for existing records
-                await pool.query(`UPDATE booksonix_records SET sku = isbn WHERE sku IS NULL AND isbn IS NOT NULL`);
-                
-                // For any remaining null SKUs, generate a temporary SKU
-                await pool.query(`UPDATE booksonix_records SET sku = 'TEMP_' || id::text WHERE sku IS NULL`);
-                
-                // Make SKU NOT NULL and add unique constraint
-                await pool.query(`ALTER TABLE booksonix_records ALTER COLUMN sku SET NOT NULL`);
-                
-                try {
-                    await pool.query(`ALTER TABLE booksonix_records ADD CONSTRAINT booksonix_records_sku_key UNIQUE (sku)`);
-                } catch (e) {
-                    // Constraint might already exist
-                }
-                
-                console.log('Migration complete: Booksonix table now uses SKU as primary identifier');
+            if (!session) {
+                // No session, redirect to login
+                window.location.href = '/login.html';
+                return;
             }
             
-            // Create indexes if they don't exist
-            await pool.query(`CREATE INDEX IF NOT EXISTS idx_booksonix_sku ON booksonix_records(sku)`);
-            await pool.query(`CREATE INDEX IF NOT EXISTS idx_booksonix_isbn ON booksonix_records(isbn)`);
-        }
-        
-        // Verify final structure
-        const finalCheck = await pool.query(`SELECT COUNT(*) as total FROM booksonix_records`);
-        console.log(`Booksonix table ready with ${finalCheck.rows[0].total} existing records`);
-        
-    } catch (err) {
-        console.error('Error initializing Booksonix table:', err);
-    }
-}
-
-// Initialize Gazelle Sales table - FIXED VERSION WITHOUT UNIQUE CONSTRAINT
-async function initGazelleTable() {
-    try {
-        // First check if table exists
-        const tableExists = await pool.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'gazelle_sales'
-            );
-        `);
-
-        if (!tableExists.rows[0].exists) {
-            // Create table WITHOUT the problematic unique constraint
-            console.log('Creating Gazelle Sales table...');
-            await pool.query(`
-                CREATE TABLE gazelle_sales (
-                    id SERIAL PRIMARY KEY,
-                    order_ref VARCHAR(100),
-                    order_date DATE,
-                    customer_name VARCHAR(500),
-                    city VARCHAR(200),
-                    country VARCHAR(100),
-                    title VARCHAR(500),
-                    isbn13 VARCHAR(50),
-                    quantity INTEGER DEFAULT 0,
-                    unit_price DECIMAL(10,2),
-                    discount DECIMAL(5,2) DEFAULT 0,
-                    publisher VARCHAR(500),
-                    format VARCHAR(100),
-                    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
-            
-            console.log('Gazelle Sales table created successfully');
-        } else {
-            // Table exists - remove the problematic constraint if it exists
-            console.log('Gazelle Sales table exists, checking constraints...');
             try {
-                await pool.query(`
-                    ALTER TABLE gazelle_sales 
-                    DROP CONSTRAINT IF EXISTS gazelle_sales_order_ref_isbn13_customer_name_key
-                `);
-                console.log('Removed unique constraint if it existed');
+                const sessionData = JSON.parse(session);
+                
+                // Check if session is still valid
+                const maxAge = sessionData.remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+                if (new Date() - new Date(sessionData.timestamp) > maxAge) {
+                    // Session expired
+                    localStorage.removeItem('userSession');
+                    window.location.href = '/login.html';
+                    return;
+                }
+                
+                // Store user info globally for the page to use
+                window.currentUser = sessionData;
+                
             } catch (e) {
-                // Constraint didn't exist, that's fine
+                // Invalid session data
+                localStorage.removeItem('userSession');
+                window.location.href = '/login.html';
             }
+        })();
+        
+        function logout() {
+            localStorage.removeItem('userSession');
+            window.location.href = '/login.html';
         }
-        
-        // Create indexes for better performance
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_order_ref ON gazelle_sales(order_ref)`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_customer ON gazelle_sales(customer_name)`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_isbn ON gazelle_sales(isbn13)`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_gazelle_date ON gazelle_sales(order_date)`);
-        
-        console.log('Gazelle Sales table initialized successfully');
-        
-    } catch (err) {
-        console.error('Error initializing Gazelle Sales table:', err);
-    }
-}
-
-// Initialize database tables
-async function initDatabase() {
-    try {
-        console.log('Starting database initialization...');
-
-        // Create users table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(100) UNIQUE NOT NULL,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                role VARCHAR(50) DEFAULT 'editor',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP
-            )
-        `);
-
-        // Create customer name mappings table (for settings)
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS customer_mappings (
-                id SERIAL PRIMARY KEY,
-                original_name VARCHAR(500) NOT NULL,
-                display_name VARCHAR(500) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
-        // Initialize Booksonix table
-        await initBooksonixTable();
-        
-        // Initialize Gazelle table
-        await initGazelleTable();
-
-        console.log('Database tables created successfully');
-        
-        // Check if admin user exists
-        const adminCheck = await pool.query("SELECT * FROM users WHERE username = 'admin'");
-        
-        if (adminCheck.rows.length === 0) {
-            console.log('Creating admin user...');
-            
-            // Create admin user with password 'admin123'
-            const hashedPassword = await bcrypt.hash('admin123', 10);
-            
-            await pool.query(
-                'INSERT INTO users (username, email, password, role) VALUES ($1, $2, $3, $4)',
-                ['admin', 'admin@antennebooks.com', hashedPassword, 'admin']
-            );
-            
-            console.log('=================================');
-            console.log('Admin user created successfully!');
-            console.log('Username: admin');
-            console.log('Password: admin123');
-            console.log('IMPORTANT: Please change this password immediately after first login!');
-            console.log('=================================');
-        } else {
-            console.log('Admin user already exists');
+    </script>
+    
+    <!-- Import Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
+
+        body {
+            font-family: 'Courier', monospace;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'EB Garamond', serif;
+            font-weight: 400;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #f1f3f4;
+            padding-bottom: 20px;
+        }
+
+        h1 {
+            color: #333333;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-info {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .user-info strong {
+            color: #333;
+        }
+
+        .btn-logout {
+            background: #dc3545;
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-decoration: none;
+            transition: background-color 0.3s;
+        }
+
+        .btn-logout:hover {
+            background: #c82333;
+        }
+
+        .back-link {
+            color: #666;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid #666;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .back-link:hover {
+            background: #f1f3f4;
+        }
+
+        .upload-section {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+
+        .upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .file-drop-area {
+            padding: 30px;
+            border: 2px dashed #bdc3c7;
+            border-radius: 5px;
+            background: white;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .file-drop-area:hover {
+            border-color: #666666;
+            background-color: #f8f9fa;
+        }
+
+        .file-drop-area.dragover {
+            border-color: #333333;
+            background-color: #e9ecef;
+        }
+
+        .file-drop-area input[type="file"] {
+            display: none;
+        }
+
+        .file-drop-text {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .file-count {
+            font-size: 18px;
+            font-weight: bold;
+            color: #28a745;
+            margin-top: 10px;
+        }
+
+        .upload-note {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 15px;
+        }
+
+        .upload-note strong {
+            color: #856404;
+        }
+
+        .format-info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-bottom: 15px;
+        }
+
+        .file-list {
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 5px;
+            padding: 10px;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 12px;
+        }
+
+        .file-item:hover {
+            background: #f1f3f4;
+        }
+
+        .file-name {
+            flex: 1;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-size {
+            color: #666;
+            margin-left: 10px;
+            font-size: 11px;
+        }
+
+        .file-status {
+            margin-left: 10px;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+
+        .status-pending {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .status-processing {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .status-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .status-error {
+            background: #dc3545;
+            color: white;
+        }
+
+        .remove-file {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            margin-left: 10px;
+        }
+
+        .remove-file:hover {
+            background: #c82333;
+        }
+
+        .upload-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            background: #000000;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background: #333333;
+        }
+
+        button:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .btn-clear {
+            background: #6c757d;
+        }
+
+        .btn-clear:hover {
+            background: #5a6268;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .upload-progress {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            display: none;
+        }
+
+        .progress-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 20px;
+            background: #ddd;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: #28a745;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .records-section {
+            margin-top: 30px;
+        }
+
+        .records-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .records-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .refresh-btn {
+            background: #000000;
+            font-size: 14px;
+            padding: 8px 16px;
+        }
+
+        .refresh-btn:hover {
+            background: #333333;
+        }
+
+        .export-btn {
+            background: #28a745;
+            font-size: 14px;
+            padding: 8px 16px;
+        }
+
+        .export-btn:hover {
+            background: #218838;
+        }
+
+        .clear-all-btn {
+            background: #dc3545;
+            font-size: 14px;
+            padding: 8px 16px;
+        }
+
+        .clear-all-btn:hover {
+            background: #c82333;
+        }
+
+        .stats-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            border: 1px solid #ddd;
+            position: relative;
+        }
+
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 11px;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #333;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+            min-width: 1400px;
+        }
+
+        th, td {
+            padding: 6px 8px;
+            text-align: left;
+            border-right: 1px solid #eee;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        th:last-child, td:last-child {
+            border-right: none;
+        }
+
+        th {
+            background-color: #34495e;
+            color: white;
+            font-weight: normal;
+            font-family: 'Courier', monospace;
+            font-size: 9px;
+            text-transform: uppercase;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #7f8c8d;
+        }
+
+        .no-records {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+            font-style: italic;
+            font-size: 12px;
+        }
+
+        .record-count {
+            color: #7f8c8d;
+            font-size: 14px;
+        }
+
+        .showing-info {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        .debug-section {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .debug-output {
+            background: white;
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Gazelle Sales</h1>
+            <div class="header-right">
+                <span class="user-info">Logged in as: <strong id="currentUserName">User</strong></span>
+                <button class="btn-logout" onclick="logout()">Logout</button>
+                <a href="/data-upload" class="back-link">← Back to Data Upload</a>
+            </div>
+        </div>
         
-    } catch (err) {
-        console.error('Error initializing database:', err);
-        throw err;
-    }
-}
-
-// Initialize database on startup
-initDatabase().catch(err => {
-    console.error('Failed to initialize database:', err);
-});
-
-// =============================================
-// PAGE ROUTES
-// =============================================
-
-// Home page
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Customers page
-app.get('/customers', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'customers.html'));
-});
-
-// Reports page
-app.get('/reports', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'reports.html'));
-});
-
-// Settings page
-app.get('/settings', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
-});
-
-// Login page
-app.get('/login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-app.get('/login.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-// Data Upload main page
-app.get('/data-upload', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload.html'));
-});
-
-// Data Upload sub-pages
-app.get('/data-upload/page2', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page2.html'));
-});
-
-app.get('/data-upload/page3', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page3.html'));
-});
-
-app.get('/data-upload/page4', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page4.html'));
-});
-
-app.get('/data-upload/page5', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page5.html'));
-});
-
-app.get('/data-upload/page6', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'data-upload-page6.html'));
-});
-
-// Booksonix page
-app.get('/booksonix', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'booksonix.html'));
-});
-
-// Gazelle page
-app.get('/gazelle', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'gazelle.html'));
-});
-
-// =============================================
-// AUTHENTICATION ROUTES
-// =============================================
-
-// REPLACE YOUR GAZELLE UPLOAD ROUTE WITH THIS FIXED VERSION
-
-// Upload Gazelle Sales file - ENHANCED DEBUG VERSION
-app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    console.log('========================================');
-    console.log('Processing Gazelle Sales file:', req.file.originalname);
-    console.log('File path:', req.file.path);
-
-    try {
-        // Read the Excel file with multiple parsing attempts
-        const workbook = xlsx.readFile(req.file.path);
-        const sheetName = workbook.SheetNames[0];
-        console.log('Sheet name:', sheetName);
-        
-        const worksheet = workbook.Sheets[sheetName];
-        
-        // Method 1: Try reading with sheet_to_json, skipping first row
-        let data = xlsx.utils.sheet_to_json(worksheet, { 
-            range: 1, // Skip first row (0-indexed)
-            raw: false,
-            defval: '',
-            blankrows: false
-        });
-        
-        console.log('Method 1 - Rows found:', data.length);
-        
-        // If no data or headers look wrong, try Method 2
-        if (data.length === 0 || (data.length > 0 && !data[0]['Customer Name'])) {
-            console.log('Method 1 failed or incomplete, trying Method 2...');
+        <!-- Upload Section -->
+        <div class="upload-section">
+            <h2>Upload Gazelle Sales Data</h2>
             
-            // Method 2: Manual parsing
-            const range = xlsx.utils.decode_range(worksheet['!ref']);
-            console.log('Sheet range:', worksheet['!ref']);
-            console.log('Rows in sheet:', range.e.r + 1);
-            console.log('Columns in sheet:', range.e.c + 1);
+            <!-- Note about file processing -->
+            <div class="upload-note">
+                <strong>Note:</strong> The system will automatically detect your file format and map columns appropriately.
+            </div>
             
-            // First, let's check what's in the first few rows
-            console.log('\n=== Checking first 3 rows ===');
-            for (let R = 0; R <= Math.min(2, range.e.r); R++) {
-                const rowData = [];
-                for (let C = 0; C <= Math.min(5, range.e.c); C++) {
-                    const address = xlsx.utils.encode_col(C) + (R + 1);
-                    const cell = worksheet[address];
-                    rowData.push(cell ? cell.v : 'EMPTY');
-                }
-                console.log(`Row ${R + 1}:`, rowData);
-            }
+            <!-- Format information -->
+            <div class="format-info">
+                <strong>Expected Columns:</strong> Date | Cus | Cus No | Name | Invoice | Title | Imprint | Book EAN | Quantity | TOTAL | Carrier | Tracking
+            </div>
             
-            // Read headers from row 2 (index 1)
-            const headers = [];
-            for (let C = range.s.c; C <= range.e.c; ++C) {
-                const address = xlsx.utils.encode_col(C) + '2';
-                const cell = worksheet[address];
-                const headerValue = cell ? String(cell.v).trim() : '';
-                headers.push(headerValue);
-            }
-            
-            console.log('\nHeaders from row 2:', headers);
-            
-            // Create column index map for easier access
-            const columnMap = {};
-            headers.forEach((header, index) => {
-                columnMap[header] = index;
-            });
-            
-            console.log('Column mapping:', columnMap);
-            
-            // Read data starting from row 3
-            data = [];
-            for (let R = 2; R <= range.e.r; R++) {
-                const row = {};
-                let hasData = false;
+            <form id="uploadForm" class="upload-form">
+                <div class="file-drop-area" id="fileDropArea">
+                    <div>📁 Drop Excel files here or click to browse</div>
+                    <div class="file-drop-text">Supports .xls and .xlsx files</div>
+                    <div class="file-count" id="fileCount" style="display: none;"></div>
+                    <input type="file" id="fileInput" accept=".xls,.xlsx" multiple>
+                </div>
                 
-                for (let C = range.s.c; C <= range.e.c; ++C) {
-                    const address = xlsx.utils.encode_col(C) + (R + 1);
-                    const cell = worksheet[address];
-                    const header = headers[C];
+                <div id="fileList" class="file-list" style="display: none;"></div>
+                
+                <div class="upload-controls">
+                    <button type="submit" id="uploadBtn">Upload & Process Files</button>
+                    <button type="button" id="clearBtn" class="btn-clear" style="display: none;">Clear All Files</button>
+                </div>
+                
+                <div id="uploadProgress" class="upload-progress">
+                    <div class="progress-title">Processing Files...</div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progressBar"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">Processing file 0 of 0...</div>
+                </div>
+            </form>
+            <div id="status" class="status"></div>
+        </div>
+
+        <!-- Debug Section -->
+        <div class="debug-section">
+            <h3 style="margin-top: 0;">Debug Tools</h3>
+            <p style="font-size: 12px; margin: 10px 0;">Use these tools to test file parsing and uploads directly.</p>
+            
+            <input type="file" id="directFileInput" accept=".xls,.xlsx" style="margin: 10px 0;">
+            
+            <div style="margin: 10px 0;">
+                <button onclick="testDirectParse()" style="background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
+                    Test Parse This File
+                </button>
+                
+                <button onclick="testDirectUpload()" style="background: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
+                    Upload This File to Gazelle
+                </button>
+                
+                <button onclick="clearAllRecords()" style="background: #dc3545; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+                    Clear All Records
+                </button>
+            </div>
+            
+            <div id="directTestOutput" class="debug-output" style="display: none;"></div>
+        </div>
+
+        <!-- Statistics Section -->
+        <div class="stats-section">
+            <div class="stat-card">
+                <div class="stat-number" id="totalRecords">0</div>
+                <div class="stat-label">Total Records</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="uniqueOrders">0</div>
+                <div class="stat-label">Unique Orders</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalQuantity">0</div>
+                <div class="stat-label">Total Quantity</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalRevenue">£0</div>
+                <div class="stat-label">Total Revenue</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="uniqueCustomers">0</div>
+                <div class="stat-label">Unique Customers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="uniqueTitles">0</div>
+                <div class="stat-label">Unique Titles</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="newRecords">0</div>
+                <div class="stat-label">New Records Added</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="duplicatesSkipped">0</div>
+                <div class="stat-label">Duplicates Skipped</div>
+            </div>
+        </div>
+
+        <!-- Records Section -->
+        <div class="records-section">
+            <div class="records-header">
+                <h2>Gazelle Sales Records</h2>
+                <div class="records-controls">
+                    <span id="recordCount" class="record-count"></span>
+                    <button id="exportBtn" class="export-btn">Export to CSV</button>
+                    <button id="refreshBtn" class="refresh-btn">Refresh Data</button>
+                </div>
+            </div>
+            
+            <div class="showing-info" id="showingInfo">Showing all records (no pagination)</div>
+            
+            <div class="table-container">
+                <div id="recordsContainer">
+                    <div class="loading">Loading records...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Display current user
+        if (window.currentUser) {
+            document.getElementById('currentUserName').textContent = window.currentUser.username;
+        }
+        
+        // DOM elements
+        const uploadForm = document.getElementById('uploadForm');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const status = document.getElementById('status');
+        const fileDropArea = document.getElementById('fileDropArea');
+        const fileCount = document.getElementById('fileCount');
+        const fileList = document.getElementById('fileList');
+        const uploadProgress = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const recordsContainer = document.getElementById('recordsContainer');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const recordCount = document.getElementById('recordCount');
+        const showingInfo = document.getElementById('showingInfo');
+        
+        // Stats elements
+        const totalRecordsEl = document.getElementById('totalRecords');
+        const uniqueOrdersEl = document.getElementById('uniqueOrders');
+        const totalQuantityEl = document.getElementById('totalQuantity');
+        const totalRevenueEl = document.getElementById('totalRevenue');
+        const uniqueCustomersEl = document.getElementById('uniqueCustomers');
+        const uniqueTitlesEl = document.getElementById('uniqueTitles');
+        const newRecordsEl = document.getElementById('newRecords');
+        const duplicatesSkippedEl = document.getElementById('duplicatesSkipped');
+
+        let selectedFiles = [];
+        let gazelleRecords = [];
+
+        // Make selectedFiles globally accessible for debugging
+        window.selectedFiles = selectedFiles;
+
+        // Drag and drop functionality
+        fileDropArea.addEventListener('click', () => {
+            const input = document.getElementById('fileInput');
+            if (input) {
+                input.click();
+            }
+        });
+
+        fileDropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.add('dragover');
+        });
+
+        fileDropArea.addEventListener('dragleave', () => {
+            fileDropArea.classList.remove('dragover');
+        });
+
+        fileDropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileDropArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            handleFileSelection(files);
+        });
+
+        // File input change handler
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelection(e.target.files);
+        });
+
+        // Clear button handler
+        clearBtn.addEventListener('click', () => {
+            clearFileSelection();
+        });
+
+        // Refresh button handler
+        refreshBtn.addEventListener('click', () => {
+            loadRecords();
+            loadStats();
+        });
+
+        // Export button handler
+        exportBtn.addEventListener('click', () => {
+            exportToCSV();
+        });
+
+        // Handle file selection
+        function handleFileSelection(files) {
+            selectedFiles = [];
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (file.name.match(/\.(xlsx|xls)$/i)) {
+                    selectedFiles.push({
+                        file: file,
+                        status: 'pending',
+                        message: ''
+                    });
+                }
+            }
+            
+            // Update global reference
+            window.selectedFiles = selectedFiles;
+            
+            if (selectedFiles.length === 0) {
+                showStatus('Please select valid Excel files (.xls, .xlsx)', 'error');
+                return;
+            }
+            
+            console.log('Files selected:', selectedFiles.length, selectedFiles.map(f => f.file.name));
+            updateFileDisplay();
+        }
+
+        // Clear file selection
+        function clearFileSelection() {
+            selectedFiles = [];
+            window.selectedFiles = selectedFiles;
+            
+            const input = document.getElementById('fileInput');
+            if (input) {
+                input.value = '';
+            }
+            
+            updateFileDisplay();
+            uploadProgress.style.display = 'none';
+        }
+
+        // Update file display
+        function updateFileDisplay() {
+            if (selectedFiles.length === 0) {
+                fileCount.style.display = 'none';
+                fileList.style.display = 'none';
+                clearBtn.style.display = 'none';
+                
+                // Reset display without recreating input
+                const dropText = fileDropArea.querySelector('div');
+                if (dropText) {
+                    dropText.innerHTML = '📁 Drop Excel files here or click to browse';
+                }
+            } else {
+                fileCount.textContent = `${selectedFiles.length} file(s) selected`;
+                fileCount.style.display = 'block';
+                clearBtn.style.display = 'block';
+                
+                // Update file list
+                fileList.innerHTML = '';
+                selectedFiles.forEach((fileInfo, index) => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
                     
-                    if (cell && cell.v !== undefined && cell.v !== null && cell.v !== '') {
-                        row[header] = cell.v;
-                        hasData = true;
+                    const fileName = document.createElement('div');
+                    fileName.className = 'file-name';
+                    fileName.textContent = fileInfo.file.name;
+                    
+                    const fileSize = document.createElement('span');
+                    fileSize.className = 'file-size';
+                    fileSize.textContent = formatFileSize(fileInfo.file.size);
+                    
+                    const fileStatus = document.createElement('span');
+                    fileStatus.className = `file-status status-${fileInfo.status}`;
+                    fileStatus.textContent = fileInfo.status;
+                    
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'remove-file';
+                    removeBtn.textContent = '×';
+                    removeBtn.onclick = () => removeFile(index);
+                    
+                    fileItem.appendChild(fileName);
+                    fileItem.appendChild(fileSize);
+                    fileItem.appendChild(fileStatus);
+                    if (fileInfo.status === 'pending') {
+                        fileItem.appendChild(removeBtn);
+                    }
+                    
+                    fileList.appendChild(fileItem);
+                });
+                
+                fileList.style.display = 'block';
+            }
+        }
+
+        // Remove individual file
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            window.selectedFiles = selectedFiles;
+            updateFileDisplay();
+        }
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        // Upload form handler
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (selectedFiles.length === 0) {
+                showStatus('Please select files to upload', 'error');
+                return;
+            }
+
+            uploadBtn.disabled = true;
+            clearBtn.disabled = true;
+            uploadProgress.style.display = 'block';
+            status.style.display = 'none';
+            
+            let successCount = 0;
+            let errorCount = 0;
+            let totalNewRecords = 0;
+            let totalDuplicates = 0;
+
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const fileInfo = selectedFiles[i];
+                
+                // Update progress
+                progressBar.style.width = `${((i + 1) / selectedFiles.length) * 100}%`;
+                progressText.textContent = `Processing file ${i + 1} of ${selectedFiles.length}: ${fileInfo.file.name}`;
+                
+                // Update file status
+                fileInfo.status = 'processing';
+                updateFileDisplay();
+                
+                const formData = new FormData();
+                formData.append('gazelleFile', fileInfo.file);
+
+                try {
+                    const response = await fetch('/api/gazelle/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        fileInfo.status = 'success';
+                        fileInfo.message = result.message;
+                        successCount++;
+                        totalNewRecords += result.newRecords || 0;
+                        totalDuplicates += result.duplicates || 0;
+                        
+                        // Update stats
+                        newRecordsEl.textContent = totalNewRecords;
+                        duplicatesSkippedEl.textContent = totalDuplicates;
+                        
+                        console.log('Upload successful:', result);
                     } else {
-                        row[header] = '';
+                        fileInfo.status = 'error';
+                        fileInfo.message = result.error || 'Upload failed';
+                        errorCount++;
+                        console.error('Upload failed:', result);
                     }
+                } catch (error) {
+                    fileInfo.status = 'error';
+                    fileInfo.message = 'Network error: ' + error.message;
+                    errorCount++;
+                    console.error('Network error:', error);
                 }
                 
-                if (hasData) {
-                    data.push(row);
-                }
-            }
-        }
-        
-        console.log('\nTotal data rows after parsing:', data.length);
-        
-        // Log the structure of the first data row
-        if (data.length > 0) {
-            console.log('\nFirst data row structure:');
-            console.log('Available columns:', Object.keys(data[0]));
-            console.log('First row data sample:');
-            Object.keys(data[0]).forEach(key => {
-                const value = data[0][key];
-                console.log(`  "${key}": "${String(value).substring(0, 50)}${String(value).length > 50 ? '...' : ''}"`);
-            });
-        } else {
-            console.log('ERROR: No data rows found in the file!');
-            
-            // Try one more method - read everything as raw data
-            const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
-            console.log('\nRaw data rows:', rawData.length);
-            if (rawData.length > 0) {
-                console.log('First raw row:', rawData[0]);
-                console.log('Second raw row:', rawData[1]);
-                console.log('Third raw row:', rawData[2]);
+                updateFileDisplay();
             }
             
-            return res.json({
-                success: false,
-                message: 'No data rows found in the Excel file',
-                details: {
-                    sheetName: sheetName,
-                    rawRowCount: rawData.length
-                }
-            });
+            // Show final status
+            progressBar.style.width = '100%';
+            progressText.textContent = 'Processing complete!';
+            
+            let statusMessage = `Processed ${selectedFiles.length} file(s): ${successCount} successful`;
+            if (errorCount > 0) {
+                statusMessage += `, ${errorCount} failed`;
+            }
+            statusMessage += `. ${totalNewRecords} new records added`;
+            if (totalDuplicates > 0) {
+                statusMessage += `, ${totalDuplicates} duplicates updated`;
+            }
+            
+            showStatus(statusMessage, errorCount === 0 ? 'success' : 'error');
+            
+            uploadBtn.disabled = false;
+            clearBtn.disabled = false;
+            
+            // Refresh data
+            loadRecords();
+            loadStats();
+            
+            // Auto-clear after successful upload
+            if (errorCount === 0) {
+                setTimeout(() => {
+                    clearFileSelection();
+                }, 3000);
+            }
+        });
+
+        // Show status message
+        function showStatus(message, type) {
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            // Hide status after 5 seconds for success messages
+            if (type === 'success') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
         }
 
-        let newRecords = 0;
-        let updatedRecords = 0;
-        let errors = 0;
-        let skippedRows = 0;
-        const errorDetails = [];
-        const successfulInserts = [];
-
-        // Process each row
-        for (let i = 0; i < data.length; i++) {
-            const row = data[i];
-            
+        // Load and display ALL records (no pagination)
+        async function loadRecords() {
             try {
-                // Map columns - try all possible variations
-                const orderRef = (
-                    row['Order Ref.'] || 
-                    row['Order Ref'] || 
-                    row['OrderRef'] ||
-                    row['order_ref'] ||
-                    ''
-                ).toString().trim();
+                recordsContainer.innerHTML = '<div class="loading">Loading records...</div>';
                 
-                const customerName = (
-                    row['Customer Name'] || 
-                    row['CustomerName'] || 
-                    row['customer_name'] ||
-                    row['Customer'] ||
-                    ''
-                ).toString().trim();
+                // Fetch ALL records - no pagination
+                const response = await fetch('/api/gazelle/records?limit=999999');
+                const data = await response.json();
                 
-                const city = (
-                    row['City'] || 
-                    row['city'] ||
-                    ''
-                ).toString().trim();
+                gazelleRecords = data.records || [];
                 
-                const country = (
-                    row['Country'] || 
-                    row['country'] ||
-                    ''
-                ).toString().trim();
+                console.log(`Loaded ${gazelleRecords.length} Gazelle records`);
                 
-                const title = (
-                    row['Title'] || 
-                    row['title'] ||
-                    ''
-                ).toString().trim();
+                displayRecords();
                 
-                const isbn13 = (
-                    row['ISBN-13'] || 
-                    row['ISBN13'] || 
-                    row['isbn-13'] ||
-                    row['isbn13'] ||
-                    ''
-                ).toString().replace(/-/g, '').trim();
-                
-                const publisher = (
-                    row['Publishers'] || 
-                    row['Publisher'] || 
-                    row['publisher'] ||
-                    ''
-                ).toString().trim();
-                
-                const format = (
-                    row['Format'] || 
-                    row['format'] ||
-                    ''
-                ).toString().trim();
-                
-                // Parse quantity
-                let quantity = 0;
-                const quantityValue = row['Quantity'] || row['quantity'] || row['Qty'] || '';
-                if (quantityValue !== '') {
-                    const cleanQty = String(quantityValue).replace(/[^\d-]/g, '');
-                    quantity = parseInt(cleanQty) || 0;
-                }
-                
-                // Parse unit price
-                let unitPrice = 0;
-                const priceValue = 
-                    row['Unit price'] || 
-                    row['Unit Price'] || 
-                    row['unit price'] ||
-                    row['Unit price.'] ||
-                    '';
-                if (priceValue !== '') {
-                    const cleanPrice = String(priceValue)
-                        .replace(/[£$€]/g, '')
-                        .replace(/,/g, '')
-                        .trim();
-                    unitPrice = parseFloat(cleanPrice) || 0;
-                }
-                
-                // Parse discount
-                let discount = 0;
-                const discountValue = 
-                    row['Discount %'] || 
-                    row['Discount%'] || 
-                    row['Discount'] || 
-                    row['discount'] ||
-                    '';
-                if (discountValue !== '') {
-                    const cleanDiscount = String(discountValue).replace(/[%]/g, '').trim();
-                    discount = parseFloat(cleanDiscount) || 0;
-                }
-                
-                // Parse order date
-                let parsedDate = null;
-                const dateValue = 
-                    row['Order date'] || 
-                    row['Order Date'] || 
-                    row['OrderDate'] ||
-                    row['order_date'] ||
-                    row['Order date.'] ||
-                    '';
-                    
-                if (dateValue) {
-                    // Handle Excel serial dates
-                    if (typeof dateValue === 'number') {
-                        parsedDate = new Date((dateValue - 25569) * 86400 * 1000);
-                    } 
-                    // Handle Date objects
-                    else if (dateValue instanceof Date) {
-                        parsedDate = dateValue;
-                    } 
-                    // Handle string dates
-                    else if (typeof dateValue === 'string') {
-                        const trimmed = dateValue.trim();
-                        
-                        // UK format DD/MM/YYYY
-                        if (trimmed.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-                            const parts = trimmed.split('/');
-                            parsedDate = new Date(
-                                parseInt(parts[2], 10),  // year
-                                parseInt(parts[1], 10) - 1,  // month (0-indexed)
-                                parseInt(parts[0], 10)   // day
-                            );
-                        } 
-                        // Try other formats
-                        else {
-                            parsedDate = new Date(trimmed);
-                        }
-                    }
-                    
-                    // Validate date
-                    if (parsedDate && isNaN(parsedDate.getTime())) {
-                        parsedDate = null;
-                    }
-                }
-                
-                // Log first 5 rows in detail
-                if (i < 5) {
-                    console.log(`\n=== Row ${i + 1} ===`);
-                    console.log('Order Ref:', orderRef);
-                    console.log('Customer:', customerName);
-                    console.log('City:', city);
-                    console.log('Country:', country);
-                    console.log('Date:', parsedDate);
-                    console.log('Quantity:', quantity);
-                    console.log('Unit Price:', unitPrice);
-                    console.log('Discount:', discount);
-                    console.log('Title:', title.substring(0, 50));
-                }
-                
-                // Skip completely empty rows
-                if (!orderRef && !customerName && !title) {
-                    skippedRows++;
-                    continue;
-                }
-                
-                // Need at least order ref or customer name
-                if (!orderRef && !customerName) {
-                    console.log(`Row ${i + 1}: Skipping - no identifying information`);
-                    skippedRows++;
-                    continue;
-                }
-                
-                // Insert the record
-                const insertQuery = `
-                    INSERT INTO gazelle_sales 
-                    (order_ref, order_date, customer_name, city, country, title, isbn13, 
-                     quantity, unit_price, discount, publisher, format) 
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    RETURNING id
-                `;
-                
-                const values = [
-                    orderRef || 'UNKNOWN',
-                    parsedDate,
-                    customerName || 'UNKNOWN',
-                    city || '',
-                    country || '',
-                    title || '',
-                    isbn13 || '',
-                    quantity || 0,
-                    unitPrice || 0,
-                    discount || 0,
-                    publisher || '',
-                    format || ''
-                ];
-                
-                const result = await pool.query(insertQuery, values);
-                
-                if (result.rows.length > 0) {
-                    newRecords++;
-                    successfulInserts.push({
-                        row: i + 1,
-                        id: result.rows[0].id,
-                        orderRef: orderRef,
-                        customer: customerName
-                    });
-                    
-                    if (i < 5) {
-                        console.log(`Row ${i + 1}: SUCCESS - Inserted with ID ${result.rows[0].id}`);
-                    }
-                }
-                
-            } catch (err) {
-                if (err.code === '23505' || err.message.includes('duplicate')) {
-                    updatedRecords++;
-                    if (i < 5) {
-                        console.log(`Row ${i + 1}: Duplicate record`);
-                    }
-                } else {
-                    errors++;
-                    errorDetails.push({
-                        row: i + 1,
-                        error: err.message,
-                        code: err.code,
-                        detail: err.detail
-                    });
-                    
-                    if (i < 5) {
-                        console.log(`Row ${i + 1}: ERROR - ${err.message}`);
-                    }
-                }
+            } catch (error) {
+                console.error('Error loading records:', error);
+                recordsContainer.innerHTML = '<div class="no-records">Error loading records: ' + error.message + '</div>';
+                recordCount.textContent = '';
             }
         }
 
-        // Clean up uploaded file
-        fs.unlinkSync(req.file.path);
-
-        console.log('\n========================================');
-        console.log('UPLOAD SUMMARY:');
-        console.log('- File processed:', req.file.originalname);
-        console.log('- Total rows in file:', data.length);
-        console.log('- New records inserted:', newRecords);
-        console.log('- Duplicate records:', updatedRecords);
-        console.log('- Skipped rows:', skippedRows);
-        console.log('- Errors:', errors);
-        
-        if (successfulInserts.length > 0) {
-            console.log('\nFirst successful inserts:');
-            successfulInserts.slice(0, 5).forEach(insert => {
-                console.log(`  Row ${insert.row}: ID ${insert.id} - ${insert.orderRef} / ${insert.customer}`);
-            });
-        }
-        
-        if (errorDetails.length > 0) {
-            console.log('\nErrors encountered:');
-            errorDetails.slice(0, 5).forEach(error => {
-                console.log(`  Row ${error.row}: ${error.error}`);
-            });
-        }
-        console.log('========================================\n');
-
-        // Build response message
-        let message = `Processed ${data.length} rows. `;
-        if (newRecords > 0) message += `${newRecords} new records added. `;
-        if (updatedRecords > 0) message += `${updatedRecords} duplicates found. `;
-        if (skippedRows > 0) message += `${skippedRows} rows skipped. `;
-        if (errors > 0) message += `${errors} errors occurred.`;
-
-        res.json({ 
-            success: true, 
-            message: message,
-            newRecords: newRecords,
-            duplicates: updatedRecords,
-            errors: errors,
-            details: {
-                fileName: req.file.originalname,
-                totalRows: data.length,
-                newRecords,
-                updatedRecords,
-                skippedRows,
-                errors,
-                errorSample: errorDetails.slice(0, 5),
-                successSample: successfulInserts.slice(0, 5)
-            }
-        });
-
-    } catch (error) {
-        console.error('FATAL ERROR during Gazelle upload:', error);
-        console.error('Error stack:', error.stack);
-        
-        // Clean up file if it still exists
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
-        
-        res.status(500).json({ 
-            error: 'Upload failed: ' + error.message,
-            details: error.stack 
-        });
-    }
-});
-
-// Helper function to parse Excel dates (keep this the same)
-function parseExcelDate(value) {
-    if (!value) return null;
-    
-    // If it's already a Date object
-    if (value instanceof Date) {
-        return value;
-    }
-    
-    // If it's a number (Excel serial date)
-    if (typeof value === 'number') {
-        // Excel dates start from 1900-01-01
-        // The difference is 25569 days for Windows Excel
-        const excelDate = new Date((value - 25569) * 86400 * 1000);
-        if (!isNaN(excelDate.getTime())) {
-            return excelDate;
-        }
-    }
-    
-    // If it's a string
-    if (typeof value === 'string') {
-        const trimmedValue = value.trim();
-        
-        // Try parsing as ISO date first
-        let date = new Date(trimmedValue);
-        if (!isNaN(date.getTime())) {
-            return date;
-        }
-        
-        // Try DD/MM/YYYY format (UK format) - most common in your data
-        if (trimmedValue.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-            const parts = trimmedValue.split('/');
-            const day = parseInt(parts[0], 10);
-            const month = parseInt(parts[1], 10);
-            const year = parseInt(parts[2], 10);
-            
-            // Create date (month is 0-indexed in JavaScript)
-            date = new Date(year, month - 1, day);
-            if (!isNaN(date.getTime())) {
-                return date;
-            }
-        }
-        
-        // Try YYYY-MM-DD format
-        if (trimmedValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
-            date = new Date(trimmedValue);
-            if (!isNaN(date.getTime())) {
-                return date;
-            }
-        }
-    }
-    
-    return null;
-}
-// =============================================
-// BOOKSONIX ROUTES
-// =============================================
-
-app.post('/api/booksonix/upload', upload.single('booksonixFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    console.log('Processing Booksonix file:', req.file.originalname);
-
-    try {
-        const workbook = xlsx.readFile(req.file.path);
-        const sheetName = workbook.SheetNames[0];
-        const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-
-        console.log('Total rows in Excel file:', data.length);
-
-        let newRecords = 0;
-        let duplicates = 0;
-        let errors = 0;
-        let skippedNoSku = 0;
-
-        for (const row of data) {
-            // Look for SKU in multiple possible column names
-            let sku = row['SKU'] || row['sku'] || row['Sku'] || 
-                       row['Product SKU'] || row['Product Code'] || 
-                       row['Item Code'] || row['Code'] || '';
-            
-            // Clean SKU - remove hyphens
-            if (sku) {
-                sku = String(sku).replace(/-/g, '').trim();
-            }
-            
-            if (!sku) {
-                skippedNoSku++;
-                errors++;
-                continue;
+        // Display records
+        function displayRecords() {
+            if (gazelleRecords.length === 0) {
+                recordsContainer.innerHTML = '<div class="no-records">No Gazelle Sales records found. Upload Excel files to get started!</div>';
+                recordCount.textContent = '';
+                showingInfo.textContent = 'No records to display';
+                return;
             }
 
-            // Get ISBN and remove hyphens from it
-            let isbn = row['ISBN-13'] || row['ISBN13'] || row['isbn-13'] || row['ISBN'] || row['EAN'] || '';
-            if (isbn) {
-                // Remove hyphens from ISBN
-                isbn = String(isbn).replace(/-/g, '').trim();
-            }
-            
-            const title = row['Title'] || row['TITLE'] || row['Product Title'] || '';
-            const publisher = row['Publishers'] || row['Publisher'] || row['PUBLISHER'] || '';
-            
-            let price = 0;
-            const priceValue = row['Prices'] || row['Price'] || row['PRICE'] || row['RRP'] || '';
-            if (priceValue) {
-                const cleanPrice = String(priceValue)
-                    .replace(/GBP/gi, '')
-                    .replace(/£/g, '')
-                    .replace(/,/g, '')
-                    .replace(/[^\d.]/g, '')
-                    .trim();
-                price = parseFloat(cleanPrice) || 0;
-            }
+            recordCount.textContent = `Total: ${gazelleRecords.length} record${gazelleRecords.length !== 1 ? 's' : ''}`;
+            showingInfo.textContent = `Showing all ${gazelleRecords.length} records (no pagination)`;
 
+            // Create table with all the Gazelle columns
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Order Ref</th>
+                        <th>Order Date</th>
+                        <th>Customer Name</th>
+                        <th>City</th>
+                        <th>Country</th>
+                        <th>Title</th>
+                        <th>ISBN13</th>
+                        <th>Quantity</th>
+                        <th>Unit Price</th>
+                        <th>Discount</th>
+                        <th>Publisher</th>
+                        <th>Format</th>
+                        <th>Upload Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${gazelleRecords.map((record, index) => `
+                        <tr>
+                            <td>${index + 1}</td>
+                            <td>${record.order_ref || '-'}</td>
+                            <td>${record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '-'}</td>
+                            <td>${record.customer_name || '-'}</td>
+                            <td>${record.city || '-'}</td>
+                            <td>${record.country || '-'}</td>
+                            <td>${record.title || '-'}</td>
+                            <td>${record.isbn13 || '-'}</td>
+                            <td>${record.quantity || 0}</td>
+                            <td>${record.unit_price ? '£' + parseFloat(record.unit_price).toFixed(2) : '-'}</td>
+                            <td>${record.discount ? record.discount + '%' : '0%'}</td>
+                            <td>${record.publisher || '-'}</td>
+                            <td>${record.format || '-'}</td>
+                            <td>${record.upload_date ? new Date(record.upload_date).toLocaleDateString('en-GB') : '-'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            `;
+
+            recordsContainer.innerHTML = '';
+            recordsContainer.appendChild(table);
+        }
+
+        // Load statistics
+        async function loadStats() {
             try {
-                const result = await pool.query(
-                    `INSERT INTO booksonix_records 
-                    (sku, isbn, title, author, publisher, price, quantity) 
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (sku) 
-                    DO UPDATE SET 
-                        isbn = COALESCE(NULLIF(EXCLUDED.isbn, ''), booksonix_records.isbn),
-                        title = EXCLUDED.title,
-                        publisher = EXCLUDED.publisher,
-                        price = EXCLUDED.price,
-                        last_updated = CURRENT_TIMESTAMP
-                    RETURNING id, (xmax = 0) AS inserted`,
-                    [sku, isbn || null, title, '', publisher, price, 0]
-                );
-
-                if (result.rows[0].inserted) {
-                    newRecords++;
-                } else {
-                    duplicates++;
-                }
-            } catch (err) {
-                console.error('Error inserting Booksonix record:', err.message);
-                errors++;
-            }
-        }
-
-        // Clean up uploaded file
-        fs.unlinkSync(req.file.path);
-
-        res.json({ 
-            success: true, 
-            message: `Processed ${data.length} records. New: ${newRecords}, Updated: ${duplicates}, Errors: ${errors}`,
-            newRecords: newRecords,
-            duplicates: duplicates,
-            errors: errors
-        });
-
-    } catch (error) {
-        console.error('Booksonix upload error:', error);
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/booksonix/records', async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit) || 500;
-        const page = parseInt(req.query.page) || 1;
-        const offset = (page - 1) * limit;
-        
-        // Get total count
-        const countResult = await pool.query('SELECT COUNT(*) as total FROM booksonix_records');
-        const totalRecords = parseInt(countResult.rows[0].total);
-        
-        // Get records
-        const result = await pool.query(
-            'SELECT * FROM booksonix_records ORDER BY upload_date DESC LIMIT $1 OFFSET $2',
-            [limit, offset]
-        );
-        
-        res.json({ 
-            records: result.rows,
-            totalRecords: totalRecords,
-            page: page,
-            limit: limit
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-app.get('/api/booksonix/stats', async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(DISTINCT sku) as unique_skus,
-                COUNT(DISTINCT isbn) as unique_isbns,
-                COUNT(DISTINCT publisher) as publishers
-            FROM booksonix_records
-        `);
-        
-        res.json({
-            totalRecords: result.rows[0].total_records || 0,
-            uniqueSKUs: result.rows[0].unique_skus || 0,
-            uniqueISBNs: result.rows[0].unique_isbns || 0,
-            totalPublishers: result.rows[0].publishers || 0
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-// =============================================
-// GAZELLE SALES ROUTES - COMPLETELY FIXED VERSION
-// =============================================
-
-// Helper function to parse Excel dates
-function parseExcelDate(value) {
-    if (!value) return null;
-    
-    // If it's already a Date object
-    if (value instanceof Date) {
-        return value;
-    }
-    
-    // If it's a number (Excel serial date)
-    if (typeof value === 'number') {
-        // Excel dates start from 1900-01-01
-        // The difference is 25569 days for Windows Excel
-        const excelDate = new Date((value - 25569) * 86400 * 1000);
-        if (!isNaN(excelDate.getTime())) {
-            return excelDate;
-        }
-    }
-    
-    // If it's a string
-    if (typeof value === 'string') {
-        const trimmedValue = value.trim();
-        
-        // Try parsing as ISO date first
-        let date = new Date(trimmedValue);
-        if (!isNaN(date.getTime())) {
-            return date;
-        }
-        
-        // Try DD/MM/YYYY format (UK format) - most common in your data
-        if (trimmedValue.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-            const parts = trimmedValue.split('/');
-            const day = parseInt(parts[0], 10);
-            const month = parseInt(parts[1], 10);
-            const year = parseInt(parts[2], 10);
-            
-            // Create date (month is 0-indexed in JavaScript)
-            date = new Date(year, month - 1, day);
-            if (!isNaN(date.getTime())) {
-                return date;
-            }
-        }
-        
-        // Try YYYY-MM-DD format
-        if (trimmedValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
-            date = new Date(trimmedValue);
-            if (!isNaN(date.getTime())) {
-                return date;
-            }
-        }
-    }
-    
-    return null;
-}
-
-// Upload Gazelle Sales file - FIXED VERSION
-app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    console.log('========================================');
-    console.log('Processing Gazelle Sales file:', req.file.originalname);
-    console.log('File path:', req.file.path);
-
-    try {
-        // Read the Excel file
-        const workbook = xlsx.readFile(req.file.path, {
-            cellDates: true,
-            cellNF: false,
-            cellText: false,
-            raw: false,
-            dateNF: 'dd/mm/yyyy'
-        });
-        
-        const sheetName = workbook.SheetNames[0];
-        console.log('Sheet name:', sheetName);
-        
-        // Get the worksheet
-        const worksheet = workbook.Sheets[sheetName];
-        
-        // Get the range of the worksheet
-        const range = xlsx.utils.decode_range(worksheet['!ref']);
-        
-        // Read headers from row 2 (index 1)
-        const headers = [];
-        for (let C = range.s.c; C <= range.e.c; ++C) {
-            const address = xlsx.utils.encode_col(C) + '2'; // Row 2
-            const cell = worksheet[address];
-            headers.push(cell ? String(cell.v).trim() : `Column_${C}`);
-        }
-        
-        console.log('Headers found in row 2:', headers);
-        
-        // Read data starting from row 3 (index 2)
-        const data = [];
-        for (let R = 2; R <= range.e.r; ++R) {
-            const row = {};
-            let hasData = false;
-            
-            for (let C = range.s.c; C <= range.e.c; ++C) {
-                const address = xlsx.utils.encode_col(C) + (R + 1);
-                const cell = worksheet[address];
-                const header = headers[C];
+                const response = await fetch('/api/gazelle/stats');
+                const stats = await response.json();
                 
-                if (cell && cell.v !== undefined && cell.v !== null && cell.v !== '') {
-                    row[header] = cell.v;
-                    hasData = true;
-                } else {
-                    row[header] = '';
-                }
-            }
-            
-            // Only add rows that have at least some data
-            if (hasData) {
-                data.push(row);
-            }
-        }
-        
-        console.log('Total data rows found:', data.length);
-        
-        // Log first row to debug column mapping
-        if (data.length > 0) {
-            console.log('First data row:', data[0]);
-            console.log('Available columns:', Object.keys(data[0]));
-        }
-
-        let newRecords = 0;
-        let updatedRecords = 0;
-        let errors = 0;
-        let skippedRows = 0;
-        const errorDetails = [];
-
-        // Process each row
-        for (let i = 0; i < data.length; i++) {
-            const row = data[i];
-            
-            try {
-                // Map columns based on your Excel file structure
-                // Using exact column names from your file
-                const orderRef = (row['Order Ref.'] || row['Order Ref'] || '').toString().trim();
-                const customerName = (row['Customer Name'] || '').toString().trim();
-                const city = (row['City'] || '').toString().trim();
-                const country = (row['Country'] || '').toString().trim();
-                const title = (row['Title'] || '').toString().trim();
-                const isbn13 = (row['ISBN-13'] || row['ISBN13'] || '').toString().replace(/-/g, '').trim();
-                const publisher = (row['Publishers'] || row['Publisher'] || '').toString().trim();
-                const format = (row['Format'] || '').toString().trim();
+                // Update the display elements
+                totalRecordsEl.textContent = (stats.totalRecords || 0).toLocaleString();
+                uniqueOrdersEl.textContent = (stats.uniqueOrders || 0).toLocaleString();
+                totalQuantityEl.textContent = (stats.totalQuantity || 0).toLocaleString();
+                totalRevenueEl.textContent = '£' + (stats.totalRevenue || 0).toFixed(2);
+                uniqueCustomersEl.textContent = (stats.uniqueCustomers || 0).toLocaleString();
+                uniqueTitlesEl.textContent = (stats.uniqueTitles || 0).toLocaleString();
                 
-                // Parse numeric values
-                let quantity = 0;
-                const quantityValue = row['Quantity'] || row['quantity'] || 0;
-                if (quantityValue !== '') {
-                    quantity = parseInt(String(quantityValue).replace(/[^\d-]/g, '')) || 0;
-                }
+                console.log('Stats loaded:', stats);
                 
-                let unitPrice = 0;
-                const priceValue = row['Unit price'] || row['Unit Price'] || row['Unit price.'] || 0;
-                if (priceValue !== '') {
-                    const cleanPrice = String(priceValue)
-                        .replace(/[£$€]/g, '')
-                        .replace(/,/g, '')
-                        .trim();
-                    unitPrice = parseFloat(cleanPrice) || 0;
-                }
-                
-                let discount = 0;
-                const discountValue = row['Discount %'] || row['Discount%'] || row['Discount'] || 0;
-                if (discountValue !== '') {
-                    discount = parseFloat(String(discountValue).replace(/%/g, '')) || 0;
-                }
-
-                // Parse order date
-                let parsedDate = null;
-                const dateValue = row['Order date'] || row['Order Date'] || row['Order date.'];
-                if (dateValue) {
-                    if (typeof dateValue === 'number') {
-                        // Excel serial date
-                        parsedDate = new Date((dateValue - 25569) * 86400 * 1000);
-                    } else if (dateValue instanceof Date) {
-                        parsedDate = dateValue;
-                    } else if (typeof dateValue === 'string') {
-                        // Try to parse string date
-                        const trimmed = dateValue.trim();
-                        
-                        // Try DD/MM/YYYY format first (UK format)
-                        if (trimmed.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-                            const parts = trimmed.split('/');
-                            const day = parseInt(parts[0], 10);
-                            const month = parseInt(parts[1], 10);
-                            const year = parseInt(parts[2], 10);
-                            parsedDate = new Date(year, month - 1, day);
-                        } else {
-                            // Try other formats
-                            parsedDate = new Date(trimmed);
-                        }
-                        
-                        // Validate the date
-                        if (isNaN(parsedDate.getTime())) {
-                            parsedDate = null;
-                        }
-                    }
-                }
-
-                // Debug first 3 rows
-                if (i < 3) {
-                    console.log(`\nRow ${i + 1} parsed data:`, {
-                        orderRef,
-                        customerName: customerName.substring(0, 30),
-                        city,
-                        country,
-                        dateRaw: dateValue,
-                        dateParsed: parsedDate,
-                        quantity,
-                        unitPrice,
-                        discount,
-                        title: title.substring(0, 30) + (title.length > 30 ? '...' : '')
-                    });
-                }
-
-                // Skip completely empty rows
-                if (!orderRef && !customerName && !title) {
-                    console.log(`Row ${i + 1}: Skipped - completely empty row`);
-                    skippedRows++;
-                    continue;
-                }
-                
-                // Validate essential fields - at least need order ref or customer
-                if (!orderRef && !customerName) {
-                    console.log(`Row ${i + 1}: Skipped - no order ref or customer name`);
-                    skippedRows++;
-                    continue;
-                }
-                
-                // Insert the record
-                const result = await pool.query(
-                    `INSERT INTO gazelle_sales 
-                    (order_ref, order_date, customer_name, city, country, title, isbn13, 
-                     quantity, unit_price, discount, publisher, format) 
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    RETURNING id`,
-                    [
-                        orderRef || 'UNKNOWN', 
-                        parsedDate, 
-                        customerName || 'UNKNOWN', 
-                        city || '', 
-                        country || '', 
-                        title || '', 
-                        isbn13 || '', 
-                        quantity, 
-                        unitPrice, 
-                        discount, 
-                        publisher || '', 
-                        format || ''
-                    ]
-                );
-
-                if (result.rows.length > 0) {
-                    newRecords++;
-                    if (i < 5) {
-                        console.log(`Row ${i + 1}: Inserted successfully with ID ${result.rows[0].id}`);
-                    }
-                }
-
-            } catch (err) {
-                // Check if it's a duplicate error
-                if (err.code === '23505' || err.message.includes('duplicate')) {
-                    updatedRecords++;
-                    console.log(`Row ${i + 1}: Record already exists (duplicate)`);
-                } else {
-                    console.error(`Error processing row ${i + 1}:`, err.message);
-                    errors++;
-                    errorDetails.push({
-                        row: i + 1,
-                        error: err.message,
-                        data: {
-                            orderRef: row['Order Ref.'] || row['Order Ref'],
-                            customer: row['Customer Name']
-                        }
-                    });
-                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
             }
         }
 
-        // Clean up uploaded file
-        fs.unlinkSync(req.file.path);
-
-        console.log('========================================');
-        console.log('Upload Summary:');
-        console.log('- Total rows processed:', data.length);
-        console.log('- New records inserted:', newRecords);
-        console.log('- Duplicate records:', updatedRecords);
-        console.log('- Skipped rows:', skippedRows);
-        console.log('- Errors:', errors);
-        if (errorDetails.length > 0) {
-            console.log('Error details (first 5):', errorDetails.slice(0, 5));
-        }
-        console.log('========================================');
-
-        // Return response
-        let message = `Processed ${data.length} rows. `;
-        if (newRecords > 0) message += `${newRecords} new records added. `;
-        if (updatedRecords > 0) message += `${updatedRecords} duplicates found. `;
-        if (skippedRows > 0) message += `${skippedRows} rows skipped. `;
-        if (errors > 0) message += `${errors} errors occurred.`;
-
-        res.json({ 
-            success: true, 
-            message: message,
-            newRecords: newRecords,
-            duplicates: updatedRecords,
-            errors: errors,
-            details: {
-                totalRows: data.length,
-                newRecords,
-                updatedRecords,
-                skippedRows,
-                errors,
-                errorSample: errorDetails.slice(0, 5)
+        // Export to CSV function
+        function exportToCSV() {
+            if (gazelleRecords.length === 0) {
+                showStatus('No data to export', 'error');
+                return;
             }
-        });
 
-    } catch (error) {
-        console.error('Fatal error during Gazelle upload:', error);
-        console.error('Stack trace:', error.stack);
-        
-        // Clean up file if it still exists
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
-        
-        res.status(500).json({ 
-            error: 'Upload failed: ' + error.message,
-            details: error.stack 
-        });
-    }
-});
-
-// Get Gazelle Sales records
-app.get('/api/gazelle/records', async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit) || 999999; // Default to all records
-        const page = parseInt(req.query.page) || 1;
-        const offset = (page - 1) * limit;
-        
-        // Get total count
-        const countResult = await pool.query('SELECT COUNT(*) as total FROM gazelle_sales');
-        const totalRecords = parseInt(countResult.rows[0].total);
-        
-        // Get records
-        const result = await pool.query(
-            `SELECT * FROM gazelle_sales 
-             ORDER BY upload_date DESC, order_date DESC 
-             LIMIT $1 OFFSET $2`,
-            [limit, offset]
-        );
-        
-        res.json({ 
-            records: result.rows,
-            totalRecords: totalRecords,
-            page: page,
-            limit: limit
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-// Get Gazelle Sales statistics
-app.get('/api/gazelle/stats', async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(DISTINCT order_ref) as unique_orders,
-                SUM(quantity) as total_quantity,
-                SUM(quantity * unit_price * (1 - discount/100)) as total_revenue,
-                COUNT(DISTINCT customer_name) as unique_customers,
-                COUNT(DISTINCT title) as unique_titles,
-                COUNT(DISTINCT publisher) as unique_publishers
-            FROM gazelle_sales
-        `);
-        
-        res.json({
-            totalRecords: result.rows[0].total_records || 0,
-            uniqueOrders: result.rows[0].unique_orders || 0,
-            totalQuantity: result.rows[0].total_quantity || 0,
-            totalRevenue: parseFloat(result.rows[0].total_revenue || 0),
-            uniqueCustomers: result.rows[0].unique_customers || 0,
-            uniqueTitles: result.rows[0].unique_titles || 0,
-            uniquePublishers: result.rows[0].unique_publishers || 0
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-// =============================================
-// CUSTOMER API ROUTES
-// =============================================
-
-app.get('/api/customers', async (req, res) => {
-    try {
-        // Get customers from Gazelle Sales data
-        const result = await pool.query(`
-            SELECT 
-                customer_name,
-                city,
-                country,
-                COUNT(DISTINCT order_ref) as total_orders,
-                SUM(quantity) as total_quantity,
-                SUM(quantity * unit_price * (1 - discount/100)) as total_revenue,
-                MAX(order_date) as last_order
-            FROM gazelle_sales
-            GROUP BY customer_name, city, country
-            ORDER BY customer_name
-        `);
-        
-        // Get statistics
-        const stats = await pool.query(`
-            SELECT 
-                COUNT(DISTINCT customer_name) as total_customers,
-                COUNT(DISTINCT country) as total_countries,
-                COUNT(DISTINCT city) as total_cities,
-                COUNT(DISTINCT order_ref) as total_orders
-            FROM gazelle_sales
-        `);
-        
-        res.json({
-            customers: result.rows,
-            stats: stats.rows[0]
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-// =============================================
-// REPORT API ROUTES
-// =============================================
-
-app.get('/api/titles', async (req, res) => {
-    try {
-        // Get unique titles from Gazelle Sales
-        const result = await pool.query(`
-            SELECT DISTINCT title 
-            FROM gazelle_sales 
-            WHERE title IS NOT NULL AND title != ''
-            ORDER BY title
-        `);
-        
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-app.post('/api/generate-report', async (req, res) => {
-    try {
-        const { publisher, startDate, endDate, titles } = req.body;
-        
-        // Build the query
-        let query = `
-            SELECT DISTINCT
-                customer_name,
-                city,
-                country,
-                COUNT(DISTINCT order_ref) as total_orders,
-                SUM(quantity) as total_quantity,
-                MAX(order_date) as last_order
-            FROM gazelle_sales
-            WHERE 1=1
-        `;
-        
-        const params = [];
-        let paramIndex = 1;
-        
-        // Add date filter if provided
-        if (startDate) {
-            query += ` AND order_date >= $${paramIndex}`;
-            params.push(startDate);
-            paramIndex++;
-        }
-        
-        if (endDate) {
-            query += ` AND order_date <= $${paramIndex}`;
-            params.push(endDate);
-            paramIndex++;
-        }
-        
-        // Add title filter if provided
-        if (titles && titles.length > 0) {
-            const titlePlaceholders = titles.map((_, i) => `$${paramIndex + i}`).join(',');
-            query += ` AND title IN (${titlePlaceholders})`;
-            params.push(...titles);
-            paramIndex += titles.length;
-        }
-        
-        // Add publisher filter if provided
-        if (publisher) {
-            query += ` AND LOWER(publisher) LIKE LOWER($${paramIndex})`;
-            params.push(`%${publisher}%`);
-            paramIndex++;
-        }
-        
-        query += ` GROUP BY customer_name, city, country ORDER BY country, city, customer_name`;
-        
-        const result = await pool.query(query, params);
-        
-        res.json({
-            data: result.rows,
-            totalCustomers: result.rows.length,
-            publisher: publisher,
-            startDate: startDate,
-            endDate: endDate,
-            titles: titles
-        });
-        
-    } catch (error) {
-        console.error('Generate report error:', error);
-        res.status(500).json({ error: 'Failed to generate report: ' + error.message });
-    }
-});
-
-// =============================================
-// USER MANAGEMENT ROUTES
-// =============================================
-
-app.get('/api/users', async (req, res) => {
-    try {
-        const result = await pool.query(
-            'SELECT id, username, email, role, created_at, last_login FROM users ORDER BY id'
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-app.post('/api/users', async (req, res) => {
-    const { username, email, password, role } = req.body;
-
-    if (!username || !email || !password) {
-        return res.status(400).json({ error: 'Username, email, and password are required' });
-    }
-
-    try {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const result = await pool.query(
-            'INSERT INTO users (username, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id',
-            [username, email, hashedPassword, role || 'editor']
-        );
-        res.json({ success: true, id: result.rows[0].id });
-    } catch (err) {
-        if (err.code === '23505') {
-            res.status(400).json({ error: 'Username or email already exists' });
-        } else {
-            console.error('Database error:', err);
-            res.status(500).json({ error: 'Database error' });
-        }
-    }
-});
-
-app.put('/api/users/:id', async (req, res) => {
-    const { id } = req.params;
-    const { username, email, password, role } = req.body;
-
-    try {
-        let query = 'UPDATE users SET username = $1, email = $2, role = $3';
-        let params = [username, email, role];
-        let paramIndex = 4;
-
-        if (password) {
-            const hashedPassword = await bcrypt.hash(password, 10);
-            query += `, password = $${paramIndex}`;
-            params.push(hashedPassword);
-            paramIndex++;
-        }
-
-        query += ` WHERE id = $${paramIndex}`;
-        params.push(id);
-
-        const result = await pool.query(query, params);
-
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        res.json({ success: true });
-    } catch (err) {
-        if (err.code === '23505') {
-            res.status(400).json({ error: 'Username or email already exists' });
-        } else {
-            console.error('Database error:', err);
-            res.status(500).json({ error: 'Database error' });
-        }
-    }
-});
-
-app.delete('/api/users/:id', async (req, res) => {
-    const { id } = req.params;
-
-    try {
-        const userResult = await pool.query('SELECT role FROM users WHERE id = $1', [id]);
-        if (userResult.rows.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        if (userResult.rows[0].role === 'admin') {
-            const adminCount = await pool.query(
-                "SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND id != $1",
-                [id]
-            );
-            
-            if (adminCount.rows[0].count === '0') {
-                return res.status(400).json({ error: 'Cannot delete the last admin user' });
-            }
-        }
-
-        await pool.query('DELETE FROM users WHERE id = $1', [id]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-// =============================================
-// SETTINGS ROUTES
-// =============================================
-
-app.get('/api/mappings', async (req, res) => {
-    try {
-        const result = await pool.query(
-            'SELECT * FROM customer_mappings ORDER BY id'
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Error loading mappings:', err);
-        res.status(500).json({ error: 'Error loading mappings' });
-    }
-});
-
-app.post('/api/mappings', async (req, res) => {
-    const { original_name, display_name } = req.body;
-    try {
-        await pool.query(
-            'INSERT INTO customer_mappings (original_name, display_name) VALUES ($1, $2)',
-            [original_name, display_name]
-        );
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Error adding mapping:', err);
-        res.status(500).json({ error: 'Error adding mapping' });
-    }
-});
-
-app.delete('/api/mappings/:id', async (req, res) => {
-    const { id } = req.params;
-    try {
-        await pool.query('DELETE FROM customer_mappings WHERE id = $1', [id]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Error deleting mapping:', err);
-        res.status(500).json({ error: 'Error deleting mapping' });
-    }
-});
-
-app.get('/api/stats', async (req, res) => {
-    try {
-        // Get Booksonix stats
-        const booksonixResult = await pool.query(
-            'SELECT COUNT(*) as total FROM booksonix_records'
-        );
-        
-        // Get Gazelle stats
-        const gazelleResult = await pool.query(
-            'SELECT COUNT(*) as total FROM gazelle_sales'
-        );
-        
-        // Get customer stats from Gazelle
-        const customerResult = await pool.query(
-            'SELECT COUNT(DISTINCT customer_name) as total FROM gazelle_sales'
-        );
-        
-        // Get title stats from Gazelle
-        const titleResult = await pool.query(
-            'SELECT COUNT(DISTINCT title) as total FROM gazelle_sales'
-        );
-        
-        res.json({
-            total_records: gazelleResult.rows[0].total || 0,
-            total_customers: customerResult.rows[0].total || 0,
-            total_titles: titleResult.rows[0].total || 0,
-            excluded_customers: 0,
-            total_booksonix: booksonixResult.rows[0].total || 0,
-            total_gazelle: gazelleResult.rows[0].total || 0
-        });
-    } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-app.put('/api/settings', async (req, res) => {
-    // In a production app, you'd save these settings to the database
-    console.log('Settings update:', req.body);
-    res.json({ success: true });
-});
-
-app.delete('/api/clear-booksonix', async (req, res) => {
-    try {
-        const result = await pool.query('DELETE FROM booksonix_records');
-        res.json({ 
-            success: true, 
-            message: `Successfully cleared ${result.rowCount} Booksonix records`,
-            deletedCount: result.rowCount
-        });
-    } catch (err) {
-        console.error('Error clearing Booksonix records:', err);
-        res.status(500).json({ error: 'Failed to clear Booksonix records' });
-    }
-});
-
-// Clear all Gazelle sales data
-app.delete('/api/clear-data', async (req, res) => {
-    try {
-        const result = await pool.query('DELETE FROM gazelle_sales');
-        res.json({ 
-            success: true, 
-            message: `Successfully cleared ${result.rowCount} sales records`,
-            deletedCount: result.rowCount
-        });
-    } catch (err) {
-        console.error('Error clearing sales data:', err);
-        res.status(500).json({ error: 'Failed to clear sales data' });
-    }
-});
-
-// Export data endpoints
-app.get('/api/export-all', async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT * FROM gazelle_sales 
-            ORDER BY order_date DESC, customer_name
-        `);
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'No data to export' });
-        }
-        
-        // Create CSV content
-        const headers = ['Order Ref', 'Order Date', 'Customer Name', 'City', 'Country', 'Title', 'ISBN-13', 'Quantity', 'Unit Price', 'Discount %', 'Publisher', 'Format'];
-        let csvContent = headers.join(',') + '\n';
-        
-        result.rows.forEach(row => {
-            const rowData = [
-                row.order_ref || '',
-                row.order_date ? new Date(row.order_date).toLocaleDateString('en-GB') : '',
-                `"${(row.customer_name || '').replace(/"/g, '""')}"`,
-                `"${(row.city || '').replace(/"/g, '""')}"`,
-                row.country || '',
-                `"${(row.title || '').replace(/"/g, '""')}"`,
-                row.isbn13 || '',
-                row.quantity || 0,
-                row.unit_price || 0,
-                row.discount || 0,
-                `"${(row.publisher || '').replace(/"/g, '""')}"`,
-                row.format || ''
+            // Define CSV headers
+            const headers = [
+                'Order Ref', 'Order Date', 'Customer Name', 'City', 'Country',
+                'Title', 'ISBN13', 'Quantity', 'Unit Price', 'Discount',
+                'Publisher', 'Format', 'Upload Date'
             ];
-            csvContent += rowData.join(',') + '\n';
-        });
-        
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="gazelle_export_${new Date().toISOString().split('T')[0]}.csv"`);
-        res.send(csvContent);
-        
-    } catch (err) {
-        console.error('Export error:', err);
-        res.status(500).json({ error: 'Export failed' });
-    }
-});
 
-app.get('/api/backup', async (req, res) => {
-    try {
-        // This is a placeholder - in production, you'd implement proper database backup
-        res.json({ success: true, message: 'Backup functionality would be implemented here' });
-    } catch (err) {
-        res.status(500).json({ error: 'Backup failed' });
-    }
-});
+            // Create CSV content
+            let csvContent = headers.join(',') + '\n';
 
-app.post('/api/reset-exclusions', async (req, res) => {
-    try {
-        // Placeholder - implement if you need exclusions functionality
-        res.json({ 
-            success: true, 
-            message: 'Exclusions functionality not implemented in this version' 
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to reset exclusions' });
-    }
-});
+            gazelleRecords.forEach(record => {
+                const row = [
+                    record.order_ref || '',
+                    record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '',
+                    `"${(record.customer_name || '').replace(/"/g, '""')}"`,
+                    `"${(record.city || '').replace(/"/g, '""')}"`,
+                    record.country || '',
+                    `"${(record.title || '').replace(/"/g, '""')}"`,
+                    record.isbn13 || '',
+                    record.quantity || 0,
+                    record.unit_price || 0,
+                    record.discount || 0,
+                    `"${(record.publisher || '').replace(/"/g, '""')}"`,
+                    record.format || '',
+                    record.upload_date ? new Date(record.upload_date).toLocaleDateString('en-GB') : ''
+                ];
+                csvContent += row.join(',') + '\n';
+            });
 
-// TEMPORARY DATABASE FIX ROUTE - REMOVE AFTER USING
-app.get('/api/fix-gazelle-table', async (req, res) => {
-    try {
-        console.log('Fixing Gazelle table structure...');
-        
-        // Drop the constraint if it exists
-        await pool.query(`
-            ALTER TABLE gazelle_sales 
-            DROP CONSTRAINT IF EXISTS gazelle_sales_order_ref_isbn13_customer_name_key
-        `);
-        
-        console.log('Constraint removed successfully');
-        
-        // Get current table structure
-        const structure = await pool.query(`
-            SELECT column_name, data_type, is_nullable
-            FROM information_schema.columns
-            WHERE table_name = 'gazelle_sales'
-            ORDER BY ordinal_position
-        `);
-        
-        res.json({
-            success: true,
-            message: 'Gazelle table fixed successfully',
-            columns: structure.rows
-        });
-    } catch (err) {
-        console.error('Error fixing Gazelle table:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
+            // Create blob and download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `gazelle_sales_export_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
 
-// =============================================
-// HEALTH CHECK
-// =============================================
-
-app.get('/health', async (req, res) => {
-    try {
-        await pool.query('SELECT 1');
-        res.json({ 
-            status: 'healthy', 
-            timestamp: new Date().toISOString(),
-            database: 'connected'
-        });
-    } catch (err) {
-        res.status(503).json({ 
-            status: 'unhealthy', 
-            timestamp: new Date().toISOString(),
-            database: 'disconnected',
-            error: err.message
-        });
-    }
-});
-// ADD THIS TEST ENDPOINT TO YOUR server.js (anywhere before app.listen)
-
-// Test endpoint to verify database insertion works
-app.get('/api/test-gazelle-insert', async (req, res) => {
-    console.log('Testing Gazelle table insert...');
-    
-    try {
-        // First, check if the table exists and its structure
-        const tableInfo = await pool.query(`
-            SELECT column_name, data_type, is_nullable 
-            FROM information_schema.columns 
-            WHERE table_name = 'gazelle_sales'
-            ORDER BY ordinal_position
-        `);
-        
-        console.log('Gazelle table columns:', tableInfo.rows);
-        
-        // Try to insert a test record
-        const testResult = await pool.query(
-            `INSERT INTO gazelle_sales 
-            (order_ref, order_date, customer_name, city, country, title, isbn13, 
-             quantity, unit_price, discount, publisher, format) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            RETURNING *`,
-            [
-                'TEST-' + Date.now(),
-                new Date(),
-                'Test Customer',
-                'London',
-                'UK',
-                'Test Book Title',
-                '9781234567890',
-                1,
-                9.99,
-                0,
-                'Test Publisher',
-                'Paperback'
-            ]
-        );
-        
-        console.log('Test insert successful:', testResult.rows[0]);
-        
-        res.json({
-            success: true,
-            message: 'Test record inserted successfully',
-            tableStructure: tableInfo.rows,
-            insertedRecord: testResult.rows[0]
-        });
-        
-    } catch (error) {
-        console.error('Test insert failed:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message,
-            code: error.code,
-            detail: error.detail,
-            hint: error.hint,
-            table: error.table,
-            constraint: error.constraint
-        });
-    }
-});
-
-// Test endpoint to read and parse the Excel file without inserting
-app.post('/api/test-gazelle-parse', upload.single('testFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-    
-    console.log('Test parsing file:', req.file.originalname);
-    
-    try {
-        const workbook = xlsx.readFile(req.file.path);
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        
-        // Read as raw array data
-        const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1 });
-        
-        console.log('Total raw rows:', rawData.length);
-        console.log('First 5 rows (raw):');
-        rawData.slice(0, 5).forEach((row, index) => {
-            console.log(`Row ${index + 1}:`, row.slice(0, 5)); // First 5 columns only
-        });
-        
-        // Try different parsing methods
-        const method1 = xlsx.utils.sheet_to_json(worksheet);
-        const method2 = xlsx.utils.sheet_to_json(worksheet, { range: 1 });
-        const method3 = xlsx.utils.sheet_to_json(worksheet, { header: 'A' });
-        
-        // Clean up
-        fs.unlinkSync(req.file.path);
-        
-        res.json({
-            fileName: req.file.originalname,
-            rawRowCount: rawData.length,
-            firstRawRows: rawData.slice(0, 5),
-            method1Count: method1.length,
-            method1Sample: method1.slice(0, 2),
-            method2Count: method2.length,
-            method2Sample: method2.slice(0, 2),
-            method3Count: method3.length,
-            method3Sample: method3.slice(0, 2)
-        });
-        
-    } catch (error) {
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
+            showStatus('Data exported successfully', 'success');
         }
-        res.status(500).json({ error: error.message });
-    }
-});
-// Start server
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Visit http://localhost:${PORT} to access the application`);
-    console.log('=================================');
-    console.log('IMPORTANT: Default admin credentials');
-    console.log('Username: admin');
-    console.log('Password: admin123');
-    console.log('Please change this password after first login!');
-    console.log('=================================');
-});
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-    console.log('\nShutting down gracefully...');
-    pool.end(() => {
-        console.log('Database pool closed.');
-        process.exit(0);
-    });
-});
-// SIMPLE TEST UPLOAD - Add this temporarily
-app.post('/api/gazelle/test-upload', upload.single('gazelleFile'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    try {
-        // Just try to read the file and insert one test record
-        const testInsert = await pool.query(
-            `INSERT INTO gazelle_sales 
-            (order_ref, customer_name, city, country, title, quantity, unit_price) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id`,
-            ['TEST-' + Date.now(), 'Test Customer', 'London', 'UK', 'Test Book', 1, 10.99]
-        );
-        
-        fs.unlinkSync(req.file.path);
-        
-        res.json({ 
-            success: true, 
-            message: 'Test insert successful',
-            insertedId: testInsert.rows[0].id
-        });
-        
-    } catch (error) {
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
+        // Debug functions
+        async function testDirectParse() {
+            const fileInput = document.getElementById('directFileInput');
+            const output = document.getElementById('directTestOutput');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('Please select a file using the file input above');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('testFile', file);
+            
+            output.style.display = 'block';
+            output.innerHTML = 'Testing file: ' + file.name + '...<br><br>';
+            
+            try {
+                const response = await fetch('/api/test-gazelle-parse', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                output.innerHTML += '<strong>Parse Results:</strong><br>';
+                output.innerHTML += 'Total Raw Rows: ' + data.rawRowCount + '<br>';
+                output.innerHTML += 'Method 1 rows: ' + data.method1Count + '<br>';
+                output.innerHTML += 'Method 2 rows (skip first row): ' + data.method2Count + '<br><br>';
+                
+                output.innerHTML += '<strong>First 5 Raw Rows:</strong><br>';
+                output.innerHTML += '<pre>' + JSON.stringify(data.firstRawRows, null, 2) + '</pre><br>';
+                
+                output.innerHTML += '<strong>Parsed Data Sample (Method 2 - Your Format):</strong><br>';
+                output.innerHTML += '<pre>' + JSON.stringify(data.method2Sample, null, 2) + '</pre>';
+                
+                // Check column structure
+                if (data.method2Sample && data.method2Sample.length > 0) {
+                    const columns = Object.keys(data.method2Sample[0]);
+                    output.innerHTML += '<br><strong>Detected Columns:</strong><br>';
+                    output.innerHTML += columns.join(', ');
+                    
+                    // Check if it's the Antenne format
+                    if (columns.includes('Date') && columns.includes('Cus') && columns.includes('Invoice')) {
+                        output.innerHTML += '<br><br><strong style="color: green;">✓ Antenne format detected!</strong>';
+                    } else {
+                        output.innerHTML += '<br><br><strong style="color: orange;">⚠ Unknown format - may need adjustment</strong>';
+                    }
+                }
+                
+                // Store for debugging
+                window.lastParseResult = data;
+                console.log('Parse result stored in window.lastParseResult', data);
+                
+            } catch (error) {
+                output.innerHTML += '<strong style="color: red;">Error:</strong> ' + error.message;
+            }
         }
-        res.status(500).json({ 
-            error: error.message,
-            detail: error.detail,
-            code: error.code
+
+        async function testDirectUpload() {
+            const fileInput = document.getElementById('directFileInput');
+            const output = document.getElementById('directTestOutput');
+            
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('Please select a file using the file input above');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('gazelleFile', file);
+            
+            output.style.display = 'block';
+            output.innerHTML = 'Uploading file: ' + file.name + '...<br><br>';
+            
+            try {
+                const response = await fetch('/api/gazelle/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                console.log('Direct upload response:', data);
+                
+                if (data.success) {
+                    output.innerHTML += '<strong style="color: green;">Success!</strong><br>';
+                    output.innerHTML += 'Message: ' + data.message + '<br>';
+                    output.innerHTML += 'New Records: ' + (data.newRecords || 0) + '<br>';
+                    output.innerHTML += 'Duplicates: ' + (data.duplicates || 0) + '<br>';
+                    output.innerHTML += 'Errors: ' + (data.errors || 0) + '<br><br>';
+                    
+                    if (data.details) {
+                        output.innerHTML += '<strong>Details:</strong><br>';
+                        output.innerHTML += '<pre>' + JSON.stringify(data.details, null, 2) + '</pre>';
+                    }
+                    
+                    // Refresh the page data
+                    loadRecords();
+                    loadStats();
+                } else {
+                    output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
+                    output.innerHTML += 'Error: ' + (data.error || 'Unknown error') + '<br>';
+                    if (data.details) {
+                        output.innerHTML += '<pre>' + data.details + '</pre>';
+                    }
+                }
+                
+            } catch (error) {
+                output.innerHTML += '<strong style="color: red;">Network Error:</strong> ' + error.message;
+                console.error('Direct upload error:', error);
+            }
+        }
+
+        async function clearAllRecords() {
+            if (!confirm('Are you sure you want to DELETE ALL Gazelle records? This cannot be undone!')) {
+                return;
+            }
+            
+            const output = document.getElementById('directTestOutput');
+            output.style.display = 'block';
+            output.innerHTML = 'Clearing all records...<br>';
+            
+            try {
+                const response = await fetch('/api/clear-data', {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    output.innerHTML += '<strong style="color: green;">Success!</strong><br>';
+                    output.innerHTML += data.message + '<br>';
+                    output.innerHTML += 'Deleted ' + data.deletedCount + ' records<br>';
+                    
+                    // Refresh the page
+                    loadRecords();
+                    loadStats();
+                } else {
+                    output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
+                    output.innerHTML += 'Error: ' + (data.error || 'Unknown error');
+                }
+            } catch (error) {
+                output.innerHTML += '<strong style="color: red;">Error:</strong> ' + error.message;
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Gazelle Sales page loaded');
+            console.log('Ready to process Antenne format Excel files');
+            loadRecords();
+            loadStats();
         });
-    }
-});
+    </script>
+</body>
+</html>
