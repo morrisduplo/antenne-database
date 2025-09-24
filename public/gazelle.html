@@ -620,17 +620,17 @@
                 <strong>Expected Headers (Row 2):</strong> Date | Cus | Cus No | Name | Invoice | Title | Imprint | Book EAN | Quantity | TOTAL | Carrier | Tracking
             </div>
 
-            <!-- Column mapping info -->
+            <!-- Column mapping info - UPDATED -->
             <div class="column-mapping">
                 <strong>Column Mapping:</strong>
                 <table>
                     <tr>
                         <td>Column A:</td><td>Date → Order Date</td>
-                        <td>Column G:</td><td>Imprint → Publisher Imprint</td>
+                        <td>Column G:</td><td>Imprint → Publisher</td>
                     </tr>
                     <tr>
-                        <td>Column B:</td><td>Cus → Customer Code</td>
-                        <td>Column H:</td><td>Book EAN → ISBN-13</td>
+                        <td>Column B:</td><td>Cus → Customer</td>
+                        <td>Column H:</td><td>Book EAN → Book EAN</td>
                     </tr>
                     <tr>
                         <td>Column C:</td><td>Cus No → Customer Number</td>
@@ -1090,7 +1090,7 @@
             }
         }
 
-        // Display records - UPDATED to match database fields
+        // Display records - UPDATED to match new database fields
         function displayRecords() {
             if (gazelleRecords.length === 0) {
                 recordsContainer.innerHTML = '<div class="no-records">No Gazelle Sales records found. Upload Excel files to get started!</div>';
@@ -1102,19 +1102,19 @@
             recordCount.textContent = `Total: ${gazelleRecords.length} record${gazelleRecords.length !== 1 ? 's' : ''}`;
             showingInfo.textContent = `Showing all ${gazelleRecords.length} records (no pagination)`;
 
-            // Create table with columns matching the Excel format and database fields
+            // Create table with columns matching the Excel format and new database fields
             const table = document.createElement('table');
             table.innerHTML = `
                 <thead>
                     <tr>
                         <th>#</th>
                         <th>Date</th>
-                        <th>Cus</th>
+                        <th>Customer</th>
                         <th>Cus No</th>
                         <th>Name</th>
                         <th>Invoice</th>
                         <th>Title</th>
-                        <th>Imprint</th>
+                        <th>Publisher</th>
                         <th>Book EAN</th>
                         <th>Quantity</th>
                         <th>Unit Price</th>
@@ -1129,13 +1129,13 @@
                         <tr>
                             <td>${index + 1}</td>
                             <td>${record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '-'}</td>
-                            <td>${record.customer_code || '-'}</td>
+                            <td>${record.customer || '-'}</td>
                             <td>${record.customer_number || '-'}</td>
                             <td>${record.customer_name || '-'}</td>
                             <td>${record.invoice || '-'}</td>
                             <td>${record.title || '-'}</td>
-                            <td>${record.imprint || '-'}</td>
-                            <td>${record.isbn13 || '-'}</td>
+                            <td>${record.publisher || '-'}</td>
+                            <td>${record.book_ean || '-'}</td>
                             <td>${record.quantity || 0}</td>
                             <td>${record.unit_price ? '£' + parseFloat(record.unit_price).toFixed(2) : '-'}</td>
                             <td>${record.total_amount ? '£' + parseFloat(record.total_amount).toFixed(2) : '-'}</td>
@@ -1172,7 +1172,7 @@
             }
         }
 
-        // Export to CSV function - UPDATED to match Excel format
+        // Export to CSV function - UPDATED to match new fields
         function exportToCSV() {
             if (gazelleRecords.length === 0) {
                 showStatus('No data to export', 'error');
@@ -1181,8 +1181,8 @@
 
             // Define CSV headers matching the original Excel format
             const headers = [
-                'Date', 'Cus', 'Cus No', 'Name', 'Invoice', 
-                'Title', 'Imprint', 'Book EAN', 'Quantity', 
+                'Date', 'Customer', 'Customer No', 'Customer Name', 'Invoice', 
+                'Title', 'Publisher', 'Book EAN', 'Quantity', 
                 'TOTAL', 'Carrier', 'Tracking', 'Upload Date'
             ];
 
@@ -1192,13 +1192,13 @@
             gazelleRecords.forEach(record => {
                 const row = [
                     record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '',
-                    record.customer_code || '',
+                    record.customer || '',
                     record.customer_number || '',
                     `"${(record.customer_name || '').replace(/"/g, '""')}"`,
                     record.invoice || '',
                     `"${(record.title || '').replace(/"/g, '""')}"`,
-                    `"${(record.imprint || '').replace(/"/g, '""')}"`,
-                    record.isbn13 || '',
+                    `"${(record.publisher || '').replace(/"/g, '""')}"`,
+                    record.book_ean || '',
                     record.quantity || 0,
                     record.total_amount || 0,
                     `"${(record.carrier || '').replace(/"/g, '""')}"`,
@@ -1267,6 +1267,7 @@
                     // Check if it's the Antenne format
                     if (columns.includes('Date') && columns.includes('Cus') && columns.includes('Invoice')) {
                         output.innerHTML += '<br><br><strong style="color: green;">✓ Antenne format detected! Headers on row 2, data from row 3.</strong>';
+                        output.innerHTML += '<br>Column mapping: Imprint→Publisher, Book EAN→Book EAN';
                     } else {
                         output.innerHTML += '<br><br><strong style="color: orange;">⚠ Unknown format - may need adjustment</strong>';
                     }
@@ -1373,7 +1374,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             console.log('Gazelle Sales page loaded');
             console.log('Format: Headers on row 2, data from row 3');
-            console.log('Column mapping configured for A-L columns');
+            console.log('Column mapping updated: Customer, Publisher, Book EAN');
             loadRecords();
             loadStats();
         });
