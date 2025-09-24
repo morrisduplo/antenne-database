@@ -574,7 +574,129 @@
             </form>
             <div id="status" class="status"></div>
         </div>
+<!-- ADD THIS DEBUG SECTION TO gazelle.html, right after the upload section -->
 
+<!-- Debug Section - Add this after the upload-section div -->
+<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px;">
+    <h3 style="margin-top: 0;">Debug Tools</h3>
+    
+    <div style="margin: 10px 0;">
+        <button onclick="testDatabaseInsert()" style="background: #17a2b8; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
+            Test Database Insert
+        </button>
+        <span id="testResult" style="margin-left: 10px;"></span>
+    </div>
+    
+    <div style="margin: 10px 0;">
+        <button onclick="testFileParse()" style="background: #ffc107; color: #333; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+            Test File Parse (Select File First)
+        </button>
+    </div>
+    
+    <div id="debugOutput" style="background: #f8f9fa; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; max-height: 300px; overflow-y: auto; display: none;">
+    </div>
+</div>
+
+<script>
+// Debug functions
+async function testDatabaseInsert() {
+    const resultSpan = document.getElementById('testResult');
+    const debugDiv = document.getElementById('debugOutput');
+    
+    resultSpan.textContent = 'Testing...';
+    
+    try {
+        const response = await fetch('/api/test-gazelle-insert');
+        const data = await response.json();
+        
+        if (data.success) {
+            resultSpan.textContent = '✓ Database insert works!';
+            resultSpan.style.color = 'green';
+            
+            debugDiv.style.display = 'block';
+            debugDiv.innerHTML = '<strong>Success!</strong><br>' +
+                'Test record inserted with ID: ' + data.insertedRecord.id + '<br>' +
+                'Order Ref: ' + data.insertedRecord.order_ref + '<br><br>' +
+                '<strong>Table Structure:</strong><br>' +
+                data.tableStructure.map(col => 
+                    `${col.column_name}: ${col.data_type}`
+                ).join('<br>');
+        } else {
+            resultSpan.textContent = '✗ Insert failed: ' + data.error;
+            resultSpan.style.color = 'red';
+            
+            debugDiv.style.display = 'block';
+            debugDiv.innerHTML = '<strong>Error Details:</strong><br>' +
+                'Message: ' + data.error + '<br>' +
+                'Code: ' + data.code + '<br>' +
+                'Detail: ' + data.detail + '<br>' +
+                'Constraint: ' + data.constraint;
+        }
+    } catch (error) {
+        resultSpan.textContent = '✗ Network error: ' + error.message;
+        resultSpan.style.color = 'red';
+    }
+}
+
+async function testFileParse() {
+    const fileInput = document.getElementById('fileInput');
+    const debugDiv = document.getElementById('debugOutput');
+    
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please select a file first using the file drop area above');
+        return;
+    }
+    
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('testFile', file);
+    
+    debugDiv.style.display = 'block';
+    debugDiv.innerHTML = 'Parsing file...';
+    
+    try {
+        const response = await fetch('/api/test-gazelle-parse', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        debugDiv.innerHTML = '<strong>File Parse Results:</strong><br><br>' +
+            '<strong>File:</strong> ' + data.fileName + '<br>' +
+            '<strong>Total Raw Rows:</strong> ' + data.rawRowCount + '<br><br>' +
+            '<strong>First Raw Rows:</strong><br>' +
+            '<pre>' + JSON.stringify(data.firstRawRows, null, 2).substring(0, 1000) + '</pre><br>' +
+            '<strong>Method 1 (default):</strong> ' + data.method1Count + ' rows<br>' +
+            '<pre>' + JSON.stringify(data.method1Sample, null, 2).substring(0, 500) + '</pre><br>' +
+            '<strong>Method 2 (skip row 1):</strong> ' + data.method2Count + ' rows<br>' +
+            '<pre>' + JSON.stringify(data.method2Sample, null, 2).substring(0, 500) + '</pre>';
+            
+    } catch (error) {
+        debugDiv.innerHTML = '<strong>Error:</strong> ' + error.message;
+    }
+}
+
+// Also add more detailed logging to the existing upload
+const originalUploadForm = uploadForm.addEventListener;
+uploadForm.addEventListener = function(type, handler) {
+    if (type === 'submit') {
+        const wrappedHandler = async function(e) {
+            console.log('Upload starting...');
+            console.log('Files selected:', selectedFiles.length);
+            
+            // Call original handler
+            await handler.call(this, e);
+            
+            // Check console for server response
+            console.log('Check server console for detailed logs');
+        };
+        originalUploadForm.call(this, type, wrappedHandler);
+    } else {
+        originalUploadForm.call(this, type, handler);
+    }
+};
+</script>
         <!-- Statistics Section -->
         <div class="stats-section">
             <div class="stat-card">
