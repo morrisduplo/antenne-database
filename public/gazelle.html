@@ -206,6 +206,16 @@
             color: #856404;
         }
 
+        .format-info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-bottom: 15px;
+        }
+
         .file-list {
             margin-top: 20px;
             max-height: 200px;
@@ -413,6 +423,16 @@
             background: #218838;
         }
 
+        .clear-all-btn {
+            background: #dc3545;
+            font-size: 14px;
+            padding: 8px 16px;
+        }
+
+        .clear-all-btn:hover {
+            background: #c82333;
+        }
+
         .stats-section {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -527,6 +547,26 @@
             font-size: 13px;
             margin-bottom: 10px;
         }
+
+        .debug-section {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .debug-output {
+            background: white;
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
     </style>
 </head>
 <body>
@@ -546,7 +586,12 @@
             
             <!-- Note about file processing -->
             <div class="upload-note">
-                <strong>Note:</strong> The first row (header row) of the Excel file will be used to identify columns. Make sure your Excel file has proper column headers.
+                <strong>Note:</strong> The system will automatically detect your file format and map columns appropriately.
+            </div>
+            
+            <!-- Format information -->
+            <div class="format-info">
+                <strong>Expected Columns:</strong> Date | Cus | Cus No | Name | Invoice | Title | Imprint | Book EAN | Quantity | TOTAL | Carrier | Tracking
             </div>
             
             <form id="uploadForm" class="upload-form">
@@ -575,10 +620,10 @@
             <div id="status" class="status"></div>
         </div>
 
-        <!-- Simple Direct Upload Test -->
-        <div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 20px 0; border-radius: 5px;">
-            <h3 style="margin-top: 0;">Direct File Test (Debug Tool)</h3>
-            <p style="font-size: 12px; margin: 10px 0;">This bypasses the complex file handling to test the upload directly.</p>
+        <!-- Debug Section -->
+        <div class="debug-section">
+            <h3 style="margin-top: 0;">Debug Tools</h3>
+            <p style="font-size: 12px; margin: 10px 0;">Use these tools to test file parsing and uploads directly.</p>
             
             <input type="file" id="directFileInput" accept=".xls,.xlsx" style="margin: 10px 0;">
             
@@ -587,13 +632,16 @@
                     Test Parse This File
                 </button>
                 
-                <button onclick="testDirectUpload()" style="background: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+                <button onclick="testDirectUpload()" style="background: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">
                     Upload This File to Gazelle
+                </button>
+                
+                <button onclick="clearAllRecords()" style="background: #dc3545; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+                    Clear All Records
                 </button>
             </div>
             
-            <div id="directTestOutput" style="background: white; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; max-height: 400px; overflow-y: auto; display: none; border: 1px solid #ddd;">
-            </div>
+            <div id="directTestOutput" class="debug-output" style="display: none;"></div>
         </div>
 
         <!-- Statistics Section -->
@@ -770,7 +818,12 @@
         function clearFileSelection() {
             selectedFiles = [];
             window.selectedFiles = selectedFiles;
-            fileInput.value = '';
+            
+            const input = document.getElementById('fileInput');
+            if (input) {
+                input.value = '';
+            }
+            
             updateFileDisplay();
             uploadProgress.style.display = 'none';
         }
@@ -781,22 +834,12 @@
                 fileCount.style.display = 'none';
                 fileList.style.display = 'none';
                 clearBtn.style.display = 'none';
-                fileDropArea.innerHTML = `
-                    <div>📁 Drop Excel files here or click to browse</div>
-                    <div class="file-drop-text">Supports .xls and .xlsx files</div>
-                    <div class="file-count" id="fileCount" style="display: none;"></div>
-                `;
                 
-                // Re-add the input element
-                const newInput = document.createElement('input');
-                newInput.type = 'file';
-                newInput.id = 'fileInput';
-                newInput.accept = '.xls,.xlsx';
-                newInput.multiple = true;
-                newInput.style.display = 'none';
-                newInput.addEventListener('change', (e) => handleFileSelection(e.target.files));
-                fileDropArea.appendChild(newInput);
-                fileInput = newInput;
+                // Reset display without recreating input
+                const dropText = fileDropArea.querySelector('div');
+                if (dropText) {
+                    dropText.innerHTML = '📁 Drop Excel files here or click to browse';
+                }
             } else {
                 fileCount.textContent = `${selectedFiles.length} file(s) selected`;
                 fileCount.style.display = 'block';
@@ -907,12 +950,12 @@
                         newRecordsEl.textContent = totalNewRecords;
                         duplicatesSkippedEl.textContent = totalDuplicates;
                         
-                        console.log('Upload successful:', result.message);
+                        console.log('Upload successful:', result);
                     } else {
                         fileInfo.status = 'error';
                         fileInfo.message = result.error || 'Upload failed';
                         errorCount++;
-                        console.error('Upload failed:', result.error);
+                        console.error('Upload failed:', result);
                     }
                 } catch (error) {
                     fileInfo.status = 'error';
@@ -1120,7 +1163,7 @@
             showStatus('Data exported successfully', 'success');
         }
 
-        // Direct file test functions for debugging
+        // Debug functions
         async function testDirectParse() {
             const fileInput = document.getElementById('directFileInput');
             const output = document.getElementById('directTestOutput');
@@ -1148,13 +1191,27 @@
                 output.innerHTML += '<strong>Parse Results:</strong><br>';
                 output.innerHTML += 'Total Raw Rows: ' + data.rawRowCount + '<br>';
                 output.innerHTML += 'Method 1 rows: ' + data.method1Count + '<br>';
-                output.innerHTML += 'Method 2 rows: ' + data.method2Count + '<br><br>';
+                output.innerHTML += 'Method 2 rows (skip first row): ' + data.method2Count + '<br><br>';
                 
                 output.innerHTML += '<strong>First 5 Raw Rows:</strong><br>';
                 output.innerHTML += '<pre>' + JSON.stringify(data.firstRawRows, null, 2) + '</pre><br>';
                 
-                output.innerHTML += '<strong>Parsed Data Sample (Method 2):</strong><br>';
+                output.innerHTML += '<strong>Parsed Data Sample (Method 2 - Your Format):</strong><br>';
                 output.innerHTML += '<pre>' + JSON.stringify(data.method2Sample, null, 2) + '</pre>';
+                
+                // Check column structure
+                if (data.method2Sample && data.method2Sample.length > 0) {
+                    const columns = Object.keys(data.method2Sample[0]);
+                    output.innerHTML += '<br><strong>Detected Columns:</strong><br>';
+                    output.innerHTML += columns.join(', ');
+                    
+                    // Check if it's the Antenne format
+                    if (columns.includes('Date') && columns.includes('Cus') && columns.includes('Invoice')) {
+                        output.innerHTML += '<br><br><strong style="color: green;">✓ Antenne format detected!</strong>';
+                    } else {
+                        output.innerHTML += '<br><br><strong style="color: orange;">⚠ Unknown format - may need adjustment</strong>';
+                    }
+                }
                 
                 // Store for debugging
                 window.lastParseResult = data;
@@ -1202,17 +1259,17 @@
                         output.innerHTML += '<strong>Details:</strong><br>';
                         output.innerHTML += '<pre>' + JSON.stringify(data.details, null, 2) + '</pre>';
                     }
+                    
+                    // Refresh the page data
+                    loadRecords();
+                    loadStats();
                 } else {
                     output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
-                    output.innerHTML += 'Error: ' + data.error + '<br>';
+                    output.innerHTML += 'Error: ' + (data.error || 'Unknown error') + '<br>';
                     if (data.details) {
                         output.innerHTML += '<pre>' + data.details + '</pre>';
                     }
                 }
-                
-                // Refresh stats
-                loadRecords();
-                loadStats();
                 
             } catch (error) {
                 output.innerHTML += '<strong style="color: red;">Network Error:</strong> ' + error.message;
@@ -1220,9 +1277,43 @@
             }
         }
 
+        async function clearAllRecords() {
+            if (!confirm('Are you sure you want to DELETE ALL Gazelle records? This cannot be undone!')) {
+                return;
+            }
+            
+            const output = document.getElementById('directTestOutput');
+            output.style.display = 'block';
+            output.innerHTML = 'Clearing all records...<br>';
+            
+            try {
+                const response = await fetch('/api/clear-data', {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    output.innerHTML += '<strong style="color: green;">Success!</strong><br>';
+                    output.innerHTML += data.message + '<br>';
+                    output.innerHTML += 'Deleted ' + data.deletedCount + ' records<br>';
+                    
+                    // Refresh the page
+                    loadRecords();
+                    loadStats();
+                } else {
+                    output.innerHTML += '<strong style="color: red;">Failed!</strong><br>';
+                    output.innerHTML += 'Error: ' + (data.error || 'Unknown error');
+                }
+            } catch (error) {
+                output.innerHTML += '<strong style="color: red;">Error:</strong> ' + error.message;
+            }
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             console.log('Gazelle Sales page loaded');
+            console.log('Ready to process Antenne format Excel files');
             loadRecords();
             loadStats();
         });
