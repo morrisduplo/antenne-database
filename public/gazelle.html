@@ -546,7 +546,7 @@
             
             <!-- Note about file processing -->
             <div class="upload-note">
-                <strong>Note:</strong> The first row (header row) of the Excel file will be ignored during processing. Make sure your data starts from row 2.
+                <strong>Note:</strong> The first row (header row) of the Excel file will be used to identify columns. Make sure your Excel file has proper column headers.
             </div>
             
             <form id="uploadForm" class="upload-form">
@@ -871,15 +871,19 @@
                         // Update stats
                         newRecordsEl.textContent = totalNewRecords;
                         duplicatesSkippedEl.textContent = totalDuplicates;
+                        
+                        console.log('Upload successful:', result.message);
                     } else {
                         fileInfo.status = 'error';
                         fileInfo.message = result.error || 'Upload failed';
                         errorCount++;
+                        console.error('Upload failed:', result.error);
                     }
                 } catch (error) {
                     fileInfo.status = 'error';
                     fileInfo.message = 'Network error: ' + error.message;
                     errorCount++;
+                    console.error('Network error:', error);
                 }
                 
                 updateFileDisplay();
@@ -895,7 +899,7 @@
             }
             statusMessage += `. ${totalNewRecords} new records added`;
             if (totalDuplicates > 0) {
-                statusMessage += `, ${totalDuplicates} duplicates skipped`;
+                statusMessage += `, ${totalDuplicates} duplicates updated`;
             }
             
             showStatus(statusMessage, errorCount === 0 ? 'success' : 'error');
@@ -940,9 +944,12 @@
                 
                 gazelleRecords = data.records || [];
                 
+                console.log(`Loaded ${gazelleRecords.length} Gazelle records`);
+                
                 displayRecords();
                 
             } catch (error) {
+                console.error('Error loading records:', error);
                 recordsContainer.innerHTML = '<div class="no-records">Error loading records: ' + error.message + '</div>';
                 recordCount.textContent = '';
             }
@@ -986,7 +993,7 @@
                         <tr>
                             <td>${index + 1}</td>
                             <td>${record.order_ref || '-'}</td>
-                            <td>${record.order_date ? new Date(record.order_date).toLocaleDateString() : '-'}</td>
+                            <td>${record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '-'}</td>
                             <td>${record.customer_name || '-'}</td>
                             <td>${record.city || '-'}</td>
                             <td>${record.country || '-'}</td>
@@ -997,7 +1004,7 @@
                             <td>${record.discount ? record.discount + '%' : '0%'}</td>
                             <td>${record.publisher || '-'}</td>
                             <td>${record.format || '-'}</td>
-                            <td>${record.upload_date ? new Date(record.upload_date).toLocaleDateString() : '-'}</td>
+                            <td>${record.upload_date ? new Date(record.upload_date).toLocaleDateString('en-GB') : '-'}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -1021,7 +1028,7 @@
                 uniqueCustomersEl.textContent = (stats.uniqueCustomers || 0).toLocaleString();
                 uniqueTitlesEl.textContent = (stats.uniqueTitles || 0).toLocaleString();
                 
-                console.log('Stats from backend:', stats);
+                console.log('Stats loaded:', stats);
                 
             } catch (error) {
                 console.error('Error loading stats:', error);
@@ -1048,7 +1055,7 @@
             gazelleRecords.forEach(record => {
                 const row = [
                     record.order_ref || '',
-                    record.order_date ? new Date(record.order_date).toLocaleDateString() : '',
+                    record.order_date ? new Date(record.order_date).toLocaleDateString('en-GB') : '',
                     `"${(record.customer_name || '').replace(/"/g, '""')}"`,
                     `"${(record.city || '').replace(/"/g, '""')}"`,
                     record.country || '',
@@ -1059,7 +1066,7 @@
                     record.discount || 0,
                     `"${(record.publisher || '').replace(/"/g, '""')}"`,
                     record.format || '',
-                    record.upload_date ? new Date(record.upload_date).toLocaleDateString() : ''
+                    record.upload_date ? new Date(record.upload_date).toLocaleDateString('en-GB') : ''
                 ];
                 csvContent += row.join(',') + '\n';
             });
@@ -1080,6 +1087,7 @@
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
+            console.log('Gazelle Sales page loaded');
             loadRecords();
             loadStats();
         });
