@@ -574,9 +574,9 @@
             </form>
             <div id="status" class="status"></div>
         </div>
-<!-- ADD THIS DEBUG SECTION TO gazelle.html, right after the upload section -->
+<!-- REPLACE the debug section in gazelle.html with this improved version -->
 
-<!-- Debug Section - Add this after the upload-section div -->
+<!-- Debug Section -->
 <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px;">
     <h3 style="margin-top: 0;">Debug Tools</h3>
     
@@ -590,6 +590,12 @@
     <div style="margin: 10px 0;">
         <button onclick="testFileParse()" style="background: #ffc107; color: #333; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
             Test File Parse (Select File First)
+        </button>
+    </div>
+    
+    <div style="margin: 10px 0;">
+        <button onclick="showFileStructure()" style="background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">
+            Show Selected File Info
         </button>
     </div>
     
@@ -639,20 +645,20 @@ async function testDatabaseInsert() {
 }
 
 async function testFileParse() {
-    const fileInput = document.getElementById('fileInput');
     const debugDiv = document.getElementById('debugOutput');
     
-    if (!fileInput.files || fileInput.files.length === 0) {
+    // Check if files are selected using the global selectedFiles variable
+    if (!window.selectedFiles || window.selectedFiles.length === 0) {
         alert('Please select a file first using the file drop area above');
         return;
     }
     
-    const file = fileInput.files[0];
+    const file = window.selectedFiles[0].file;
     const formData = new FormData();
     formData.append('testFile', file);
     
     debugDiv.style.display = 'block';
-    debugDiv.innerHTML = 'Parsing file...';
+    debugDiv.innerHTML = 'Parsing file: ' + file.name + '...<br>File size: ' + file.size + ' bytes<br>File type: ' + file.type + '<br><br>Sending to server...';
     
     try {
         const response = await fetch('/api/test-gazelle-parse', {
@@ -662,39 +668,94 @@ async function testFileParse() {
         
         const data = await response.json();
         
+        console.log('Parse test response:', data);
+        
         debugDiv.innerHTML = '<strong>File Parse Results:</strong><br><br>' +
             '<strong>File:</strong> ' + data.fileName + '<br>' +
             '<strong>Total Raw Rows:</strong> ' + data.rawRowCount + '<br><br>' +
-            '<strong>First Raw Rows:</strong><br>' +
-            '<pre>' + JSON.stringify(data.firstRawRows, null, 2).substring(0, 1000) + '</pre><br>' +
-            '<strong>Method 1 (default):</strong> ' + data.method1Count + ' rows<br>' +
-            '<pre>' + JSON.stringify(data.method1Sample, null, 2).substring(0, 500) + '</pre><br>' +
-            '<strong>Method 2 (skip row 1):</strong> ' + data.method2Count + ' rows<br>' +
-            '<pre>' + JSON.stringify(data.method2Sample, null, 2).substring(0, 500) + '</pre>';
+            '<strong>First Raw Rows (showing first 5 columns):</strong><br>' +
+            '<pre style="font-size: 10px; overflow-x: auto;">' + JSON.stringify(data.firstRawRows, null, 2) + '</pre><br>' +
+            '<strong>Method 1 (default parsing):</strong> ' + data.method1Count + ' rows found<br>' +
+            '<div style="max-height: 200px; overflow-y: auto;"><pre style="font-size: 10px;">' + JSON.stringify(data.method1Sample, null, 2) + '</pre></div><br>' +
+            '<strong>Method 2 (skip first row):</strong> ' + data.method2Count + ' rows found<br>' +
+            '<div style="max-height: 200px; overflow-y: auto;"><pre style="font-size: 10px;">' + JSON.stringify(data.method2Sample, null, 2) + '</pre></div>';
             
     } catch (error) {
+        console.error('Parse test error:', error);
         debugDiv.innerHTML = '<strong>Error:</strong> ' + error.message;
     }
 }
 
-// Also add more detailed logging to the existing upload
-const originalUploadForm = uploadForm.addEventListener;
-uploadForm.addEventListener = function(type, handler) {
-    if (type === 'submit') {
-        const wrappedHandler = async function(e) {
-            console.log('Upload starting...');
-            console.log('Files selected:', selectedFiles.length);
-            
-            // Call original handler
-            await handler.call(this, e);
-            
-            // Check console for server response
-            console.log('Check server console for detailed logs');
-        };
-        originalUploadForm.call(this, type, wrappedHandler);
-    } else {
-        originalUploadForm.call(this, type, handler);
+function showFileStructure() {
+    const debugDiv = document.getElementById('debugOutput');
+    
+    if (!window.selectedFiles || window.selectedFiles.length === 0) {
+        alert('No files selected');
+        return;
     }
+    
+    debugDiv.style.display = 'block';
+    debugDiv.innerHTML = '<strong>Selected Files:</strong><br><br>';
+    
+    window.selectedFiles.forEach((fileInfo, index) => {
+        const file = fileInfo.file;
+        debugDiv.innerHTML += `File ${index + 1}:<br>` +
+            `Name: ${file.name}<br>` +
+            `Size: ${file.size} bytes<br>` +
+            `Type: ${file.type || 'Unknown'}<br>` +
+            `Last Modified: ${new Date(file.lastModified).toLocaleString()}<br><br>`;
+    });
+}
+
+// Override the upload form submit to add debugging
+const originalForm = document.getElementById('uploadForm');
+if (originalForm) {
+    const originalSubmit = originalForm.onsubmit;
+    originalForm.onsubmit = async function(e) {
+        console.log('=== UPLOAD DEBUGGING ===');
+        console.log('Files to upload:', window.selectedFiles);
+        
+        if (window.selectedFiles && window.selectedFiles.length > 0) {
+            console.log('File details:', {
+                name: window.selectedFiles[0].file.name,
+                size: window.selectedFiles[0].file.size,
+                type: window.selectedFiles[0].file.type
+            });
+        }
+        
+        // Let the original handler run
+        if (originalSubmit) {
+            return originalSubmit.call(this, e);
+        }
+    };
+}
+
+// Also intercept the fetch calls to see what's happening
+const originalFetch = window.fetch;
+window.fetch = function(...args) {
+    if (args[0] && args[0].includes('/api/gazelle/upload')) {
+        console.log('=== GAZELLE UPLOAD REQUEST ===');
+        console.log('URL:', args[0]);
+        console.log('Options:', args[1]);
+        
+        return originalFetch.apply(this, args).then(response => {
+            console.log('=== GAZELLE UPLOAD RESPONSE ===');
+            console.log('Status:', response.status);
+            console.log('OK:', response.ok);
+            
+            // Clone the response so we can read it twice
+            const cloned = response.clone();
+            cloned.json().then(data => {
+                console.log('Response data:', data);
+            }).catch(err => {
+                console.log('Could not parse response as JSON:', err);
+            });
+            
+            return response;
+        });
+    }
+    
+    return originalFetch.apply(this, args);
 };
 </script>
         <!-- Statistics Section -->
