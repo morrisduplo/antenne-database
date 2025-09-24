@@ -506,7 +506,7 @@ app.get('/api/booksonix/stats', async (req, res) => {
 });
 
 // =============================================
-// GAZELLE SALES ROUTES
+// GAZELLE SALES ROUTES - FIXED VERSION
 // =============================================
 
 // Upload Gazelle Sales file
@@ -534,20 +534,6 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
         let errors = 0;
         let skippedRows = 0;
 
-        // Helper function to find column value with flexible matching
-        function findColumnValue(row, possibleNames) {
-            for (const key of Object.keys(row)) {
-                const normalizedKey = key.trim().toLowerCase().replace(/[\s_-]+/g, '');
-                for (const name of possibleNames) {
-                    const normalizedName = name.toLowerCase().replace(/[\s_-]+/g, '');
-                    if (normalizedKey === normalizedName || normalizedKey.includes(normalizedName)) {
-                        return row[key];
-                    }
-                }
-            }
-            return '';
-        }
-
         for (let i = 0; i < data.length; i++) {
             const row = data[i];
             
@@ -556,33 +542,27 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                 console.log('Available columns in Excel file:', Object.keys(row));
             }
             
-            // Use flexible column matching
-            const orderRef = findColumnValue(row, ['orderref', 'order ref', 'order reference', 'order#', 'ordernumber', 'orderno', 'reference', 'ref', 'po', 'purchaseorder']) || '';
+            // Direct column mapping based on your Excel file
+            const orderRef = row['Order Ref'] || '';
+            const orderDate = row['Order Date'] || null;
+            const customerName = row['Customer Name'] || '';
+            const city = row['City'] || '';
+            const country = row['Country'] || '';
+            const title = row['Title'] || '';
+            const isbn13 = row['ISBN-13'] || '';
+            const quantity = parseInt(row['Quantity']) || 0;
+            const unitPrice = parseFloat(row['Unit Price']) || 0;
             
-            const orderDate = findColumnValue(row, ['orderdate', 'order date', 'date', 'transactiondate', 'transdate']) || null;
+            // Handle discount - it might be "Discount %" in your file
+            let discount = 0;
+            if (row['Discount %']) {
+                discount = parseFloat(row['Discount %']) || 0;
+            } else if (row['Discount']) {
+                discount = parseFloat(row['Discount']) || 0;
+            }
             
-            const customerName = findColumnValue(row, ['customername', 'customer name', 'customer', 'client', 'name', 'shipto', 'shiptoname', 'account', 'buyer']) || '';
-            
-            const city = findColumnValue(row, ['city', 'shipcity', 'shiptocity', 'shippingcity', 'town']) || '';
-            
-            const country = findColumnValue(row, ['country', 'shipcountry', 'shiptocountry', 'shippingcountry', 'nation']) || '';
-            
-            const title = findColumnValue(row, ['title', 'producttitle', 'productname', 'itemtitle', 'booktitle', 'product', 'item', 'description', 'book', 'itemdescription']) || '';
-            
-            const isbn13 = findColumnValue(row, ['isbn13', 'isbn', 'ean', 'productcode', 'itemcode', 'sku', 'barcode']) || '';
-            
-            const quantityValue = findColumnValue(row, ['quantity', 'qty', 'orderedquantity', 'orderquantity', 'units', 'amount', 'qtyordered']);
-            const quantity = parseInt(quantityValue) || 0;
-            
-            const priceValue = findColumnValue(row, ['unitprice', 'price', 'itemprice', 'unitcost', 'cost', 'rate']);
-            const unitPrice = parseFloat(priceValue) || 0;
-            
-            const discountValue = findColumnValue(row, ['discount', 'disc', 'discountpercent']);
-            const discount = parseFloat(discountValue) || 0;
-            
-            const publisher = findColumnValue(row, ['publisher', 'pub', 'publishinghouse', 'vendor', 'supplier']) || '';
-            
-            const format = findColumnValue(row, ['format', 'bookformat', 'productformat', 'type', 'binding']) || '';
+            const publisher = row['Publishers'] || row['Publisher'] || '';
+            const format = row['Format'] || '';
 
             // Debug log for first row to see what we're extracting
             if (i === 0) {
@@ -591,17 +571,12 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                 });
             }
 
-            // Skip rows without essential data (but be more lenient)
-            if (!orderRef && !customerName && !title && !isbn13) {
+            // Skip rows without essential data
+            if (!orderRef && !customerName) {
                 console.log(`Row ${i + 1}: Skipped - no essential data found`);
                 skippedRows++;
                 continue;
             }
-            
-            // Use whatever data we have, even if some fields are missing
-            const effectiveOrderRef = orderRef || `AUTO_${Date.now()}_${i}`;
-            const effectiveCustomerName = customerName || 'Unknown Customer';
-            const effectiveTitle = title || 'Unknown Title';
 
             try {
                 // Parse date if it's a string
@@ -616,11 +591,11 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                             const parts = orderDate.split('/');
                             if (parts.length === 3) {
                                 // Try DD/MM/YYYY format
-                                parsedDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+                                parsedDate = new Date(`${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`);
                                 
                                 // If still invalid, try MM/DD/YYYY format
                                 if (isNaN(parsedDate.getTime())) {
-                                    parsedDate = new Date(`${parts[2]}-${parts[0]}-${parts[1]}`);
+                                    parsedDate = new Date(`${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`);
                                 }
                             }
                         }
@@ -654,14 +629,16 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                         format = EXCLUDED.format,
                         upload_date = CURRENT_TIMESTAMP
                     RETURNING id, (xmax = 0) AS inserted`,
-                    [effectiveOrderRef, parsedDate, effectiveCustomerName, city, country, effectiveTitle, isbn13, 
+                    [orderRef, parsedDate, customerName, city, country, title, isbn13, 
                      quantity, unitPrice, discount, publisher, format]
                 );
 
                 if (result.rows[0].inserted) {
                     newRecords++;
+                    console.log(`Row ${i + 1}: New record added`);
                 } else {
                     duplicates++;
+                    console.log(`Row ${i + 1}: Updated existing record`);
                 }
             } catch (err) {
                 console.error(`Error inserting row ${i + 1}:`, err.message);
@@ -682,7 +659,7 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
 
         res.json({ 
             success: true, 
-            message: `Processed ${data.length} records. New: ${newRecords}, Updated: ${duplicates}, Errors: ${errors}`,
+            message: `Processed ${data.length} records. New: ${newRecords}, Updated: ${duplicates}, Errors: ${errors}, Skipped: ${skippedRows}`,
             newRecords: newRecords,
             duplicates: duplicates,
             errors: errors
@@ -764,16 +741,34 @@ app.get('/api/gazelle/stats', async (req, res) => {
 
 app.get('/api/customers', async (req, res) => {
     try {
-        // TODO: Replace this with your actual customer data source query
-        // For now, returning empty structure
+        // Get customers from Gazelle Sales data
+        const result = await pool.query(`
+            SELECT 
+                customer_name,
+                city,
+                country,
+                COUNT(DISTINCT order_ref) as total_orders,
+                SUM(quantity) as total_quantity,
+                SUM(quantity * unit_price * (1 - discount/100)) as total_revenue,
+                MAX(order_date) as last_order
+            FROM gazelle_sales
+            GROUP BY customer_name, city, country
+            ORDER BY customer_name
+        `);
+        
+        // Get statistics
+        const stats = await pool.query(`
+            SELECT 
+                COUNT(DISTINCT customer_name) as total_customers,
+                COUNT(DISTINCT country) as total_countries,
+                COUNT(DISTINCT city) as total_cities,
+                COUNT(DISTINCT order_ref) as total_orders
+            FROM gazelle_sales
+        `);
+        
         res.json({
-            customers: [],
-            stats: {
-                total_customers: 0,
-                total_countries: 0,
-                total_orders: 0,
-                total_cities: 0
-            }
+            customers: result.rows,
+            stats: stats.rows[0]
         });
     } catch (err) {
         console.error('Database error:', err);
@@ -782,13 +777,20 @@ app.get('/api/customers', async (req, res) => {
 });
 
 // =============================================
-// REPORT API ROUTES (Placeholder - to be configured with your data source)
+// REPORT API ROUTES
 // =============================================
 
 app.get('/api/titles', async (req, res) => {
     try {
-        // TODO: Replace with your actual titles data source
-        res.json([]);
+        // Get unique titles from Gazelle Sales
+        const result = await pool.query(`
+            SELECT DISTINCT title 
+            FROM gazelle_sales 
+            WHERE title IS NOT NULL AND title != ''
+            ORDER BY title
+        `);
+        
+        res.json(result.rows);
     } catch (err) {
         console.error('Database error:', err);
         res.status(500).json({ error: 'Database error' });
@@ -799,11 +801,57 @@ app.post('/api/generate-report', async (req, res) => {
     try {
         const { publisher, startDate, endDate, titles } = req.body;
         
-        // TODO: Replace with your actual report generation logic
-        // For now, returning empty structure
+        // Build the query
+        let query = `
+            SELECT DISTINCT
+                customer_name,
+                city,
+                country,
+                COUNT(DISTINCT order_ref) as total_orders,
+                SUM(quantity) as total_quantity,
+                MAX(order_date) as last_order
+            FROM gazelle_sales
+            WHERE 1=1
+        `;
+        
+        const params = [];
+        let paramIndex = 1;
+        
+        // Add date filter if provided
+        if (startDate) {
+            query += ` AND order_date >= $${paramIndex}`;
+            params.push(startDate);
+            paramIndex++;
+        }
+        
+        if (endDate) {
+            query += ` AND order_date <= $${paramIndex}`;
+            params.push(endDate);
+            paramIndex++;
+        }
+        
+        // Add title filter if provided
+        if (titles && titles.length > 0) {
+            const titlePlaceholders = titles.map((_, i) => `$${paramIndex + i}`).join(',');
+            query += ` AND title IN (${titlePlaceholders})`;
+            params.push(...titles);
+            paramIndex += titles.length;
+        }
+        
+        // Add publisher filter if provided
+        if (publisher) {
+            query += ` AND LOWER(publisher) LIKE LOWER($${paramIndex})`;
+            params.push(`%${publisher}%`);
+            paramIndex++;
+        }
+        
+        query += ` GROUP BY customer_name, city, country ORDER BY country, city, customer_name`;
+        
+        const result = await pool.query(query, params);
+        
         res.json({
-            data: [],
-            totalCustomers: 0,
+            data: result.rows,
+            totalCustomers: result.rows.length,
             publisher: publisher,
             startDate: startDate,
             endDate: endDate,
@@ -973,11 +1021,21 @@ app.get('/api/stats', async (req, res) => {
             'SELECT COUNT(*) as total FROM gazelle_sales'
         );
         
+        // Get customer stats from Gazelle
+        const customerResult = await pool.query(
+            'SELECT COUNT(DISTINCT customer_name) as total FROM gazelle_sales'
+        );
+        
+        // Get title stats from Gazelle
+        const titleResult = await pool.query(
+            'SELECT COUNT(DISTINCT title) as total FROM gazelle_sales'
+        );
+        
         res.json({
-            total_records: 0,  // Placeholder for your data
-            total_customers: 0,  // Placeholder for your data
-            total_titles: 0,  // Placeholder for your data
-            excluded_customers: 0,  // Placeholder for your data
+            total_records: gazelleResult.rows[0].total || 0,
+            total_customers: customerResult.rows[0].total || 0,
+            total_titles: titleResult.rows[0].total || 0,
+            excluded_customers: 0,
             total_booksonix: booksonixResult.rows[0].total || 0,
             total_gazelle: gazelleResult.rows[0].total || 0
         });
@@ -1021,35 +1079,71 @@ app.delete('/api/clear-gazelle', async (req, res) => {
     }
 });
 
-// Export data endpoints (placeholders for now)
+// Clear all sales data (Gazelle)
+app.delete('/api/clear-data', async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM gazelle_sales');
+        res.json({ 
+            success: true, 
+            message: `Successfully cleared ${result.rowCount} sales records`,
+            deletedCount: result.rowCount
+        });
+    } catch (err) {
+        console.error('Error clearing sales data:', err);
+        res.status(500).json({ error: 'Failed to clear sales data' });
+    }
+});
+
+// Export data endpoints
 app.get('/api/export-all', async (req, res) => {
     try {
-        // TODO: Implement export based on your data structure
-        res.status(501).json({ message: 'Export functionality to be implemented' });
+        const result = await pool.query(`
+            SELECT * FROM gazelle_sales 
+            ORDER BY order_date DESC, customer_name
+        `);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'No data to export' });
+        }
+        
+        // Create CSV content
+        const headers = ['Order Ref', 'Order Date', 'Customer Name', 'City', 'Country', 'Title', 'ISBN-13', 'Quantity', 'Unit Price', 'Discount %', 'Publisher', 'Format'];
+        let csvContent = headers.join(',') + '\n';
+        
+        result.rows.forEach(row => {
+            const rowData = [
+                row.order_ref || '',
+                row.order_date ? new Date(row.order_date).toLocaleDateString('en-GB') : '',
+                `"${(row.customer_name || '').replace(/"/g, '""')}"`,
+                `"${(row.city || '').replace(/"/g, '""')}"`,
+                row.country || '',
+                `"${(row.title || '').replace(/"/g, '""')}"`,
+                row.isbn13 || '',
+                row.quantity || 0,
+                row.unit_price || 0,
+                row.discount || 0,
+                `"${(row.publisher || '').replace(/"/g, '""')}"`,
+                row.format || ''
+            ];
+            csvContent += rowData.join(',') + '\n';
+        });
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="gazelle_export_${new Date().toISOString().split('T')[0]}.csv"`);
+        res.send(csvContent);
+        
     } catch (err) {
+        console.error('Export error:', err);
         res.status(500).json({ error: 'Export failed' });
     }
 });
 
 app.get('/api/backup', async (req, res) => {
     try {
-        // TODO: Implement backup based on your needs
-        res.json({ success: true, message: 'Backup functionality to be implemented' });
+        // This is a placeholder - in production, you'd implement proper database backup
+        res.json({ success: true, message: 'Backup functionality would be implemented here' });
     } catch (err) {
         res.status(500).json({ error: 'Backup failed' });
-    }
-});
-
-// Clear data endpoints (modified for your structure)
-app.delete('/api/clear-data', async (req, res) => {
-    try {
-        // TODO: Implement based on your data tables
-        res.json({ 
-            success: true, 
-            message: 'Clear data functionality to be implemented for your tables' 
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to clear data' });
     }
 });
 
