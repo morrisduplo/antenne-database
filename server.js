@@ -534,54 +534,74 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
         let errors = 0;
         let skippedRows = 0;
 
+        // Helper function to find column value with flexible matching
+        function findColumnValue(row, possibleNames) {
+            for (const key of Object.keys(row)) {
+                const normalizedKey = key.trim().toLowerCase().replace(/[\s_-]+/g, '');
+                for (const name of possibleNames) {
+                    const normalizedName = name.toLowerCase().replace(/[\s_-]+/g, '');
+                    if (normalizedKey === normalizedName || normalizedKey.includes(normalizedName)) {
+                        return row[key];
+                    }
+                }
+            }
+            return '';
+        }
+
         for (let i = 0; i < data.length; i++) {
             const row = data[i];
             
-            // Map the Excel columns to database fields - check multiple possible column names
-            const orderRef = row['Order Ref'] || row['OrderRef'] || row['order_ref'] || 
-                           row['Order Reference'] || row['Order #'] || row['Order Number'] || 
-                           row['Ref'] || '';
+            // Debug: Log all column names from the first row
+            if (i === 0) {
+                console.log('Available columns in Excel file:', Object.keys(row));
+            }
             
-            const orderDate = row['Order Date'] || row['OrderDate'] || row['order_date'] || 
-                            row['Date'] || row['Order_Date'] || null;
+            // Use flexible column matching
+            const orderRef = findColumnValue(row, ['orderref', 'order ref', 'order reference', 'order#', 'ordernumber', 'orderno', 'reference', 'ref', 'po', 'purchaseorder']) || '';
             
-            const customerName = row['Customer Name'] || row['CustomerName'] || row['customer_name'] || 
-                               row['Customer'] || row['Client'] || row['Name'] || 
-                               row['Ship To Name'] || '';
+            const orderDate = findColumnValue(row, ['orderdate', 'order date', 'date', 'transactiondate', 'transdate']) || null;
             
-            const city = row['City'] || row['city'] || row['Ship City'] || row['Ship To City'] || 
-                        row['Shipping City'] || '';
+            const customerName = findColumnValue(row, ['customername', 'customer name', 'customer', 'client', 'name', 'shipto', 'shiptoname', 'account', 'buyer']) || '';
             
-            const country = row['Country'] || row['country'] || row['Ship Country'] || 
-                          row['Ship To Country'] || row['Shipping Country'] || '';
+            const city = findColumnValue(row, ['city', 'shipcity', 'shiptocity', 'shippingcity', 'town']) || '';
             
-            const title = row['Title'] || row['title'] || row['Product Title'] || 
-                        row['Product Name'] || row['Item Title'] || row['Book Title'] || '';
+            const country = findColumnValue(row, ['country', 'shipcountry', 'shiptocountry', 'shippingcountry', 'nation']) || '';
             
-            const isbn13 = row['ISBN13'] || row['isbn13'] || row['ISBN-13'] || row['ISBN'] || 
-                         row['isbn'] || row['EAN'] || row['Product Code'] || '';
+            const title = findColumnValue(row, ['title', 'producttitle', 'productname', 'itemtitle', 'booktitle', 'product', 'item', 'description', 'book', 'itemdescription']) || '';
             
-            const quantity = parseInt(row['Quantity'] || row['quantity'] || row['Qty'] || 
-                                    row['Ordered Quantity'] || row['Order Quantity'] || 0) || 0;
+            const isbn13 = findColumnValue(row, ['isbn13', 'isbn', 'ean', 'productcode', 'itemcode', 'sku', 'barcode']) || '';
             
-            const unitPrice = parseFloat(row['Unit Price'] || row['UnitPrice'] || row['unit_price'] || 
-                                       row['Price'] || row['Unit_Price'] || row['Item Price'] || 0) || 0;
+            const quantityValue = findColumnValue(row, ['quantity', 'qty', 'orderedquantity', 'orderquantity', 'units', 'amount', 'qtyordered']);
+            const quantity = parseInt(quantityValue) || 0;
             
-            const discount = parseFloat(row['Discount'] || row['discount'] || row['Discount %'] || 
-                                      row['Disc'] || row['Disc %'] || 0) || 0;
+            const priceValue = findColumnValue(row, ['unitprice', 'price', 'itemprice', 'unitcost', 'cost', 'rate']);
+            const unitPrice = parseFloat(priceValue) || 0;
             
-            const publisher = row['Publisher'] || row['publisher'] || row['Pub'] || 
-                            row['Publishing House'] || '';
+            const discountValue = findColumnValue(row, ['discount', 'disc', 'discountpercent']);
+            const discount = parseFloat(discountValue) || 0;
             
-            const format = row['Format'] || row['format'] || row['Book Format'] || 
-                         row['Product Format'] || '';
+            const publisher = findColumnValue(row, ['publisher', 'pub', 'publishinghouse', 'vendor', 'supplier']) || '';
+            
+            const format = findColumnValue(row, ['format', 'bookformat', 'productformat', 'type', 'binding']) || '';
 
-            // Skip rows without essential data
-            if (!orderRef && !customerName) {
-                console.log(`Row ${i + 1}: Skipped - no order ref or customer name`);
+            // Debug log for first row to see what we're extracting
+            if (i === 0) {
+                console.log('Extracted values from first row:', {
+                    orderRef, orderDate, customerName, city, country, title, isbn13, quantity, unitPrice, discount, publisher, format
+                });
+            }
+
+            // Skip rows without essential data (but be more lenient)
+            if (!orderRef && !customerName && !title && !isbn13) {
+                console.log(`Row ${i + 1}: Skipped - no essential data found`);
                 skippedRows++;
                 continue;
             }
+            
+            // Use whatever data we have, even if some fields are missing
+            const effectiveOrderRef = orderRef || `AUTO_${Date.now()}_${i}`;
+            const effectiveCustomerName = customerName || 'Unknown Customer';
+            const effectiveTitle = title || 'Unknown Title';
 
             try {
                 // Parse date if it's a string
@@ -634,7 +654,7 @@ app.post('/api/gazelle/upload', upload.single('gazelleFile'), async (req, res) =
                         format = EXCLUDED.format,
                         upload_date = CURRENT_TIMESTAMP
                     RETURNING id, (xmax = 0) AS inserted`,
-                    [orderRef, parsedDate, customerName, city, country, title, isbn13, 
+                    [effectiveOrderRef, parsedDate, effectiveCustomerName, city, country, effectiveTitle, isbn13, 
                      quantity, unitPrice, discount, publisher, format]
                 );
 
